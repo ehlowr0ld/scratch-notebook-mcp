@@ -50,14 +50,14 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
     - If a cell has `language: "json"`:
       - Parse `content` with `json.loads()`.
       - If `json_schema` is present, validate using `jsonschema.validate(instance=data, schema=schema)`.
-      - Errors from `JSONDecodeError` or `ValidationError` are mapped into `ValidationResult.errors`.
-    - Shared schemas: scratchpad metadata may expose a `schemas` map; when a cell's `json_schema` contains `{"$ref": "scratchpad://schemas/<name>"}`, the resolver loads the referenced schema from that map before calling `jsonschema.validate()`. Missing references produce a `VALIDATION_ERROR` with a clear diagnostic.
+      - Diagnostics from `JSONDecodeError` or `ValidationError` are mapped into `ValidationResult.errors` and `warnings` but do not block writes; validation is advisory.
+    - Shared schemas: scratchpad metadata may expose a `schemas` map; when a cell's `json_schema` contains `{"$ref": "scratchpad://schemas/<name>"}`, the resolver loads the referenced schema from that map before calling `jsonschema.validate()`. Missing references produce a warning attached to the `ValidationResult` (including the unresolved reference) but never prevent the cell from being stored.
 
 - **YAML parsing and schema validation**:
   - Use `PyYAML` (`yaml.safe_load`) for syntax parsing.
   - If `json_schema` is present and the YAML parses, use `jsonschema.validate()` (with the same `referencing` registry support as JSON) on the resulting object.
   - Errors (syntax or schema) are mapped into `ValidationResult.errors` with code such as `SCHEMA_ERROR` or `SYNTAX_ERROR`.
-  - Shared schema references resolve the same way as JSON, using the scratchpad metadata registry and failing validation if unresolved.
+  - Shared schema references resolve the same way as JSON, using the scratchpad metadata registry; missing references produce a warning attached to the `ValidationResult` (including the unresolved reference) but never prevent the cell from being stored.
 
 ### 3.2 Code Languages (Via `syntax-checker`)
 
@@ -125,6 +125,8 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
 - Updates apply via `delete + write` semantics within a single committed transaction to maintain atomicity across scratchpad, cell, and embedding tables.
 - Namespace create/rename/delete operations update both `namespaces` and `scratchpads` tables, cascading deletes when requested.
 - Tag mutations update scratchpad-level `tags` and ensure derived `cell_tags_cache` matches union of cell tags.
+- Cell targeting for mutations (replace, validate, delete) MUST rely exclusively on `cell_id`. Indices are recomputed for ordering purposes only.
+- Reordering is explicit: when a client supplies a `new_index` for a replacement, the storage layer shifts neighbouring cells to keep indices contiguous while updating the targeted cell's `index`.
 
 ### 4.4 Durability
 

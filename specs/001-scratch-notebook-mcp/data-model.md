@@ -58,7 +58,10 @@ Canonical JSON Schemas are defined in `specs/scratch-notepad-tool.md` (see the "
 
 - `index: integer`
   - Zero-based position in the scratchpad.
-  - Stable index; used for replace operations and validation targeting.
+  - Communicates ordering only. It MUST update whenever the cell is moved, but `cell_id` is the sole identifier for targeting cells in subsequent operations.
+- `cell_id: string`
+  - UUID string.
+  - Logical identifier for the cell, preferred for targeting specific cells.
 - `language: string`
   - Determines validation behavior and content interpretation.
   - Supported values (from `scratch-notepad-tool.md`):
@@ -89,30 +92,32 @@ Canonical JSON Schemas are defined in `specs/scratch-notepad-tool.md` (see the "
 **Concept**
 
 - Represents the outcome of validating a single cell in a scratchpad.
-- Returned by the `scratch_validate` tool and optionally by automatic validation.
+- Returned by the `scratch_validate` tool and optionally by automatic validation; results are advisory and never used to discard or block writes.
 
 **Key fields (conceptual)**
 
 - `cell_index: integer`
-  - Index of the validated cell.
+  - Index of the validated cell (for legacy/positional reference only; clients SHOULD rely on `cell_id`).
+- `cell_id: string`
+  - UUID of the validated cell; preferred identifier for clients when correlating diagnostics.
 - `language: string`
   - Copied from the cell; useful for interpreting diagnostics.
 - `valid: boolean`
-  - True if there are no fatal errors.
+  - Summary flag derived from diagnostics; `false` indicates that at least one serious issue was detected, but implementations MUST NOT reject or roll back writes solely because `valid` is `false`.
 - `errors: ValidationDiagnostic[]`
-  - List of errors; each diagnostic includes at least `message`, and optionally `code`, `line`, `column`, and raw `details`.
+  - List of more severe diagnostics; each diagnostic includes at least `message`, and optionally `code`, `line`, `column`, and raw `details`. These are still informational in nature and do not have hard compiler semantics.
 - `warnings: ValidationDiagnostic[]`
-  - List of non-fatal diagnostics (style issues, analysis warnings).
+  - List of non-fatal diagnostics (style issues, analysis warnings, missing schema references, skipped analyzers, etc.).
 - `details: object`
   - Structured details grouped by aspect:
     - `syntax` (whether syntax was checked and whether it passed).
-    - `schema` (whether schema validation was performed; whether it passed; which shared schema name was resolved when applicable).
+    - `schema` (whether schema validation was performed; whether it passed; which shared schema name was resolved when applicable; whether a schema reference was missing).
     - `analysis` (for markdown or other analyzers).
 
 **Canonical schema**
 
 - See `scratch-notepad-tool.md` section "Validation Result" (`validation-result.json`), which defines:
-  - Required: `cell_index`, `language`, `valid`, `errors`, `warnings`.
+  - Required: `cell_index`, `cell_id`, `language`, `valid`, `errors`, `warnings`.
   - Optional structured `details.syntax`, `details.schema`, `details.analysis`.
 
 ### 1.4 Error Result (`ErrorResult`)
@@ -255,8 +260,9 @@ Each MCP tool operates on the core entities above and has corresponding request/
 **Request**
 
 - `scratch_id: string`
-- `index: integer`
-- `cell: object` (as above; replaces content at `index`)
+- `cell_id: string` (required; UUID of the cell to replace)
+- `cell: object` (as above; replaces the targeted cell)
+- `new_index: integer` (optional; when supplied, the cell is moved to this zero-based position after replacement and neighbouring cells shift to keep ordering contiguous)
 
 **Response**
 
@@ -296,7 +302,7 @@ Each MCP tool operates on the core entities above and has corresponding request/
 **Request**
 
 - `scratch_id: string`
-- `indices: integer[]` (optional; if omitted or empty, validate all cells)
+- `cell_ids: string[]` (optional; if provided, validate specific cells by ID; when omitted, all cells are validated)
 
 **Response (success)**
 

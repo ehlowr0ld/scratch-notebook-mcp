@@ -331,3 +331,36 @@ Path conventions for this project (per `plan.md`):
 - [X] T096 [US4] Relocate agent-facing instructions (including canonical metadata tone) into FastMCP tool prompts so clients receive self-contained guidance.
 - [X] T097 [US4] Update FastMCP tool prompts (notably `scratch_create`) to instruct assistants to reuse project-specific namespace prefixes discovered via `scratch_namespace_list`, ensuring consistent naming when multiple projects share the default tenant.
 - [X] T098 [US4] Add contract or unit coverage that exercises the updated prompts/documentation to confirm the namespace reuse guidance remains present and accurate.
+
+---
+
+## Phase 8: Validation UX & Id-First Addressing (Post-Stabilisation)
+
+**Goal**: Evolve validation and addressing semantics so scratchpads behave like advisory workspaces (not compilers) and entities are always addressed by stable ids instead of positional indices.
+
+- [X] T099 [P] Update validation semantics in `specs/001-scratch-notebook-mcp/spec.md`, `data-model.md`, `contracts/mcp-tools.md`, `quickstart.md`, `research.md`, `README.md`, `DEVELOPMENT.md`, and `AGENTS.md` so that:
+  - All validation diagnostics (JSON/YAML/code/markdown) are advisory and never block create/append/replace operations.
+  - Missing JSON/YAML schema references (for example `scratchpad://schemas/<name>` that are not present) produce warnings and store the cell unchanged.
+  - The `ValidationResult` model clearly represents warnings vs informational messages and is framed as guidance, not hard errors.
+- [X] T100 [P] Shift `scratch_append_cell` / `scratch_replace_cell` / `scratch_validate` implementations in `scratch_notebook/server.py` and `scratch_notebook/validation.py` to the new advisory model:
+  - `VALIDATION_ERROR` has now a warning character instead of a hard error, it no longer aborts operation - it only gets logged as advisory to correct the errors presented as clear comprehensive detail context in the warning message.
+  - Automatic validation on `validate=true` must always persist the cell and return structured diagnostics without raising `VALIDATION_ERROR`.
+  - `scratch_validate` must accept explicit cell id lists and re-validate those cells even when their `validate` flag is false.
+  - Response formats and error codes must remain consistent with the updated contracts while eliminating index-only addressing wherever ids exist.
+- [X] T101 [P] Refine id-first addressing across tools and docs:
+  - Prefer `cell_id` and `scratch_id` filters over raw indices in MCP contracts and prompts.
+  - Where positional indices are currently the only option, add id-based alternatives and mark index usage as legacy in `spec.md` and `contracts/mcp-tools.md`.
+  - Update tests in `tests/unit/` and `tests/integration/` to exercise id-based flows as the primary path.
+- [X] T102 [P] Make tool prompts in `scratch_notebook/server.py` fully explicit about validation and addressing semantics:
+  - Describe exactly when automatic validation runs, what happens on validation diagnostics, and how to interpret `results` arrays.
+  - Document that manual `scratch_validate` calls treat validation as advisory and can be targeted by cell ids.
+  - Ensure prompts remain self-contained so agents understand parameters, behaviours, and response shapes without reading this repository.
+- [ ] T103 [P] Remove index-based addressing from edit operations and keep indices only as ordering metadata:
+  - Update `spec.md`, `data-model.md`, `contracts/mcp-tools.md`, `scratch-notepad-tool.md`, `research.md`, `quickstart.md`, `README.md`, `DEVELOPMENT.md`, and `AGENTS.md` so editing tools (`scratch_replace_cell`, `scratch_validate`, `scratch_read`, `scratch_list_cells`) describe `cell_id` as the sole identifier for mutations; indices are documented purely as order indicators.
+  - Extend `scratch_replace_cell` contract with an optional `new_index` parameter (or equivalent) that lets clients reorder cells without relying on positional addressing.
+  - Add a new server-level task covering prompt updates so FastMCP instructions fully describe the id-only editing and reorder semantics.
+- [ ] T104 [P] Implement the id-only editing model:
+  - Update server/storage code so `_scratch_replace_cell_impl`, `_scratch_validate_impl`, `_scratch_read_impl`, `_scratch_list_cells_impl`, and related helpers accept only `cell_id` for targeting cells (indices removed except for the reorder parameter).
+  - Teach storage to handle reorder requests by shifting neighbouring cells when `new_index` (or the chosen reorder parameter) is provided, ensuring indexes remain contiguous.
+  - Adjust prompt text, tests (unit, integration, contract), and schemas to align with the new parameter set; remove index-based addressing tests and add reorder coverage.
+  - Run full pytest and document the change in `implementation.md`.

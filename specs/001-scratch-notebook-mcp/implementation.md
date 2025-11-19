@@ -56,3 +56,14 @@
 ## 2025-11-19T08:05:00Z
 - Hardened `.gitignore` with project-specific directories (`.cursor/`, `.specify/`, `.specstory/`, `.serena/`) so SpecKit/Serena metadata never enters commits.
 - Rewrote `README.md` with the final operator view (feature overview, local run instructions, transport/auth/metrics guidance) and expanded both `DEVELOPMENT.md` and `AGENTS.md` to document the completed state, SpecKit workflow, and expectations for future agents.
+
+## 2025-11-19T09:15:00Z
+- Finalised Phase 8 spec updates for advisory validation: aligned YAML shared-schema behavior in `research.md` with the JSON case (missing references now produce warnings but never block storage) and extended FR-007 in `specs/001-scratch-notebook-mcp/spec.md` to state explicitly that `validate=true` without `json_schema` still performs syntax validation and is not an error. Marked T099 complete in `tasks.md` so implementation work (T100–T102) can proceed against the clarified spec.
+
+## 2025-11-19T10:45:00Z
+- Completed T100–T102 implementation pass:
+  - Automatic validation on append/replace now always persists cells and returns advisory diagnostics keyed by `cell_id`; missing shared schema references surface warnings instead of failing operations. Added `cell_ids` targeting to `scratch_validate` plus new integration/unit coverage.
+  - `_scratch_replace_cell_impl` now accepts `cell_id` (preferred) or indices, with documentation/tests updated to emphasise id-first addressing. `README.md`, `DEVELOPMENT.md`, `AGENTS.md`, and `spec.md` were refreshed to note that indices are legacy.
+  - FastMCP tool prompts (`scratch_list_cells`, `scratch_append_cell`, `scratch_replace_cell`, `scratch_validate`, `scratch_read`) now spell out validation semantics, warning behavior, and id usage so agents have self-contained guidance.
+- Marked T100–T102 as complete in `tasks.md`.
+- Test matrix: ran targeted integration suites plus full `pytest` (184 passed).

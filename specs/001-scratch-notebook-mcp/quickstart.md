@@ -165,6 +165,8 @@ Append a markdown cell:
 }
 ```
 
+Need to move a cell? Call `scratch_replace_cell` with the target `cell_id` plus the new content and (optionally) `new_index`. The server updates the cell and shifts neighbours so indices stay contiguous, while `cell_id` remains the only identifier you ever pass to mutations.
+
 ### 3.3 Validate Cells
 
 Validate all cells:
@@ -177,6 +179,8 @@ Validate all cells:
   }
 }
 ```
+
+Validation results are advisory: the server never discards or rolls back stored cells because of diagnostics. Supply `cell_ids` in `params` when you want to re-check specific cells; indices are returned for reference but are not accepted as selectors.
 
 ### 3.6 Manage Namespaces
 
