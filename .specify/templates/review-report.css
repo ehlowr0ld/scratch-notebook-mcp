@@ -1,0 +1,167 @@
+@page {
+  margin: 0.5in;
+}
+
+body {
+  margin: 0.35in 0;
+  padding: 0 0.1in;
+  font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 11pt;
+  line-height: 1.55;
+  color: #1f2933;
+  background-color: #ffffff;
+}
+
+/* Headings */
+h1, h2, h3, h4 {
+  color: #0f172a;
+  line-height: 1.25;
+  margin-top: 1.4em;
+  margin-bottom: 0.55em;
+  page-break-after: avoid;
+}
+
+h1 {
+  font-size: 1.9em;
+  border-bottom: 2px solid #e2e8f0;
+  padding-bottom: 0.25em;
+}
+
+h2 {
+  font-size: 1.42em;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.2em;
+}
+
+h3 {
+  font-size: 1.18em;
+}
+
+/* Text blocks */
+blockquote {
+  border-left: 4px solid #cbd5f5;
+  padding: 0.35em 0.9em;
+  margin: 0.8em 0;
+  background-color: #f8fafc;
+  color: #475569;
+}
+
+p {
+  margin: 0.55em 0;
+}
+
+/* Code */
+code, pre, kbd {
+  font-family: "Fira Code", "Source Code Pro", "Menlo", monospace;
+}
+
+code {
+  background: #eef2f8;
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  color: #0f172a;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+pre {
+  background: #0b1021;
+  color: #e5e7eb;
+  padding: 0.7em 0.9em;
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Tables - generalized for vertical (2-col), findings (4-col), and tabular (5-col) layouts */
+table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 0.9em 0 1.3em;
+  font-size: 10.5pt;
+  page-break-inside: avoid;
+}
+
+th, td {
+  border: 1px solid #d4dce7;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
+thead th {
+  background-color: #e9eff9;
+  color: #1e293b;
+  font-weight: 600;
+}
+
+tbody tr:nth-child(odd) {
+  background: #f8fafc;
+}
+
+tbody tr:hover {
+  background: #eef2ff;
+}
+
+/* Column width heuristics (non-destructive):
+   - For 2-col property tables, first column is label -> narrower
+   - For multi-col tables, let browser auto-balance while keeping cells breakable
+*/
+tr > th:first-child, tr > td:first-child {
+  width: 26%;
+}
+
+/* Lists */
+ul, ol {
+  margin: 0.4em 0 0.6em 1.35em;
+}
+
+li {
+  margin: 0.17em 0;
+}
+
+/* Footnotes and links */
+.footnote-ref {
+  font-size: 0.9em;
+}
+
+a {
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Rules */
+hr {
+  border: none;
+  border-top: 1px solid #d4dce7;
+  margin: 1.45em 0;
+}
+
+/* Pagination helpers */
+table, tr, td, th {
+  page-break-inside: avoid;
+}
+
+h1, h2, h3 {
+  orphans: 3;
+  widows: 3;
+}
+
+/* Utility for severity inline counts in paragraphs/italics */
+em, i {
+  color: #334155;
+}
+
+/* Make inline <br> in table cells render with comfortable spacing */
+td br {
+  line-height: 1.4;
+}
