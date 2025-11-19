@@ -64,6 +64,7 @@ Large refactors should run the targeted suite first and then the full suite to e
 - Keep namespaces, tags, and semantic search logic confined to the LanceDB storage layer (`storage_lancedb.py`) and search services (`search.py`).
 - Use FastMCP logging (`logging.py`) to ensure transport-aware routing (stderr vs telemetry).
 - Reuse `_shutdown_protected` and `_storage_error_guard` for new FastMCP tools so shutdown semantics and StorageError conversion remain consistent.
+- Honour NFR-017A: validation is advisory. Automatic and manual validation MUST never roll back or reject writes solely because diagnostics were reported; unresolved schema references are surfaced as warnings, not top-level errors.
 - When adding features that affect tool semantics, update:
   - Specification documents (spec, plan, data-model, research, quickstart) to reflect behaviour.
   - Tool prompts in `server.py` so agents receive complete, self-contained guidance.
@@ -76,6 +77,32 @@ Large refactors should run the targeted suite first and then the full suite to e
 - **Contributor docs** (this file plus the specification bundle) should capture architectural rationale, migration steps, and testing requirements.
 - **Agent instructions** (canonical metadata tone, parameter annotations, usage notes) must live inside the FastMCP tool prompts (`server.py`) and be mirrored in `AGENTS.md`. When prompts change, update related specification sections and add/complete tasks in `specs/001-scratch-notebook-mcp/tasks.md`.
 - Every documentation change should be paired with an entry in `specs/001-scratch-notebook-mcp/implementation.md` so future agents can trace why it happened.
+
+## MCP Tool Reference (Developer View)
+
+All tools are declared in `scratch_notebook/server.py` near the bottom of the file, immediately after their handler implementations. Each tool wraps a `_scratch_*` function that already includes `_shutdown_protected` and `_storage_error_guard`.
+
+| Tool | Handler | Purpose / Notes |
+| --- | --- | --- |
+| `scratch_create` | `_scratch_create_impl` | Create/reset pads, accepts optional `scratch_id` and metadata (title/description/summary/namespace/tags). |
+| `scratch_read` | `_scratch_read_impl` | Read pads with filters for `cell_ids`, tags, namespaces, and optional metadata omission; indices are returned for ordering but never accepted as identifiers. |
+| `scratch_list_cells` | `_scratch_list_cells_impl` | Lightweight cell listings (id, index, language, tags, metadata). Filters accept `cell_ids` + tags only. |
+| `scratch_delete` | `_scratch_delete_impl` | Delete pads and clean up embeddings. |
+| `scratch_list` | `_scratch_list_impl` | List pads with `scratch_id`, canonical metadata, namespace, and `cell_count`. Supports namespace/tag filters and limits. |
+| `scratch_list_tags` | `_scratch_list_tags_impl` | Aggregate pad-level and cell-level tags, optionally filtered by namespace. |
+| `scratch_append_cell` | `_scratch_append_cell_impl` | Append cells, honoring `validate` flag, schema registry lookups, and eviction handling. |
+| `scratch_replace_cell` | `_scratch_replace_cell_impl` | Replace cells by `cell_id`, optionally moving them via `new_index`; copies metadata when not supplied and supports validation. |
+| `scratch_validate` | `_scratch_validate_impl` | Run validation over all cells or a supplied `cell_ids` subset; respects `validation_request_timeout`. |
+| `scratch_search` | `_scratch_search_impl` | Semantic search via `SearchService`; accepts namespace/tag filters and limit. |
+| `scratch_list_schemas` | `_scratch_list_schemas_impl` | List stored schemas per pad. |
+| `scratch_get_schema` | `_scratch_get_schema_impl` | Retrieve a schema entry by id. |
+| `scratch_upsert_schema` | `_scratch_upsert_schema_impl` | Create/update schema entries (validates schema payload before storing). |
+| `scratch_namespace_list` | `_scratch_namespace_list_impl` | List namespaces for the active tenant. |
+| `scratch_namespace_create` | `_scratch_namespace_create_impl` | Register namespaces. |
+| `scratch_namespace_rename` | `_scratch_namespace_rename_impl` | Rename namespaces, optionally migrating pads. |
+| `scratch_namespace_delete` | `_scratch_namespace_delete_impl` | Delete namespaces, optionally cascading to pads. |
+
+Refer to the surrounding parameter and output schema definitions in `server.py` when adjusting behaviours or updating contracts.
 
 ## Release Checklist
 
