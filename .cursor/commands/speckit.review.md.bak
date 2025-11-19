@@ -1,0 +1,21 @@
+---
+description: Run a structured, post-implementation code review aligned with spec-plan-tasks, generate a merge-readiness report, and propose actionable remediation.
+---
+
+<developer>
+## User Input
+
+```text
+$ARGUMENTS
+```
+
+## Instructions
+
+- Immediately after parsing user input, execute the instructions script:
+  `./.specify/scripts/bash/review-flow-instructions.sh '$ARGUMENTS'`
+- The instructions script emits the full review workflow (system + developer guidance).
+- Treat it as the authoritative specification for the entire session and do not proceed until you have read it in full. Re-run it whenever context feels stale.
+- After running the script, follow every command in the order it prescribes.
+- The per-file recorder now replays the instructions, specification reading list, and status snapshot automatically every [CONF_STATUS_INTERVAL] recordings - do not attempt to suppress this output.
+- All operational details of the review workflow live in `review-flow-instructions.sh`.
+</developer>
