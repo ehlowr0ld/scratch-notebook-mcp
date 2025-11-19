@@ -415,9 +415,39 @@ def _extract_schema_registry(metadata: Mapping[str, Any] | None) -> dict[str, di
     return normalize_schema_registry_entries(metadata.get("schemas"))
 
 
+def _log_validation_warnings(
+    scratch_id: str | None,
+    result: ValidationResult,
+    *,
+    prefix: str = "Validation issues",
+) -> None:
+    if not result.errors and not result.warnings:
+        return
+    scratch_label = scratch_id or "<unknown>"
+    issue_counts: list[str] = []
+    if result.errors:
+        issue_counts.append(f"errors={len(result.errors)}")
+    if result.warnings:
+        issue_counts.append(f"warnings={len(result.warnings)}")
+    sample = None
+    if result.errors:
+        sample = result.errors[0]["message"]
+    elif result.warnings:
+        sample = result.warnings[0]["message"]
+    LOGGER.warning(
+        "%s for scratchpad %s cell %s (%s). Sample: %s",
+        prefix,
+        scratch_label,
+        result.cell_id or f"index {result.cell_index}",
+        ", ".join(issue_counts) or "no diagnostics",
+        sample,
+    )
+
+
 async def _ensure_cell_validation(
     cell: ScratchCell,
     *,
+    scratch_id: str | None = None,
     schemas: Mapping[str, Any] | None = None,
 ) -> list[ValidationResult]:
     timeout_seconds: float | None = None
@@ -425,18 +455,23 @@ async def _ensure_cell_validation(
         timeout_seconds = APP_STATE.config.validation_request_timeout.total_seconds()
     try:
         results = await validate_cells([cell], timeout=timeout_seconds, schemas=schemas)
-    except asyncio.TimeoutError as exc:
-        raise ScratchNotebookError(VALIDATION_TIMEOUT, "Validation timed out") from exc
+    except asyncio.TimeoutError:
+        timeout_result = ValidationResult(
+            cell_index=cell.index,
+            language=cell.language,
+            cell_id=cell.cell_id,
+        )
+        timeout_result.add_warning("Validation timed out", code=VALIDATION_TIMEOUT)
+        timeout_result.details["timeout"] = True
+        _log_validation_warnings(
+            scratch_id,
+            timeout_result,
+            prefix="Validation timed out",
+        )
+        return [timeout_result]
     for result in results:
-        if not result.valid:
-            raise ScratchNotebookError(
-                VALIDATION_ERROR,
-                "Cell validation failed",
-                details={
-                    "errors": list(result.errors),
-                    "warnings": list(result.warnings),
-                },
-            )
+        if result.errors or result.warnings:
+            _log_validation_warnings(scratch_id, result)
     return results
 
 
@@ -887,7 +922,11 @@ async def _scratch_append_cell_impl(
             existing_pad = storage.read_scratchpad(scratch_id)
             new_cell.index = len(existing_pad.cells)
             registry = _extract_schema_registry(existing_pad.metadata)
-            validation_results = await _ensure_cell_validation(new_cell, schemas=registry)
+            validation_results = await _ensure_cell_validation(
+                new_cell,
+                scratch_id=scratch_id,
+                schemas=registry,
+            )
         pad = storage.append_cell(scratch_id, new_cell)
         try:
             await search.reindex_pad(pad)
@@ -914,9 +953,10 @@ async def _scratch_append_cell_impl(
 @_shutdown_protected
 async def _scratch_replace_cell_impl(
     scratch_id: str,
-    index: int,
+    index: int | None,
     cell: Mapping[str, Any],
     *,
+    cell_id: str | None = None,
     context: Context | None = None,
 ) -> dict[str, Any]:
     storage = get_storage(context)
@@ -925,17 +965,57 @@ async def _scratch_replace_cell_impl(
     snapshot_state = storage.capture_snapshot(scratch_id)
     try:
         current_pad = storage.read_scratchpad(scratch_id)
-        if index < 0 or index >= len(current_pad.cells):
-            raise ScratchNotebookError(INVALID_INDEX, f"Cell index {index} out of range")
-        existing_cell = current_pad.cells[index]
+        target_index: int | None = index
+        existing_cell: ScratchCell | None = None
+        if cell_id is not None:
+            normalized_id = str(cell_id)
+            for candidate in current_pad.cells:
+                if candidate.cell_id == normalized_id:
+                    existing_cell = candidate
+                    target_index = candidate.index
+                    break
+            if existing_cell is None:
+                raise ScratchNotebookError(
+                    NOT_FOUND,
+                    f"Cell id {normalized_id} not found",
+                    details={"cell_id": normalized_id},
+                )
+            if index is not None and target_index != index:
+                raise ScratchNotebookError(
+                    VALIDATION_ERROR,
+                    "Cell id does not match the provided index",
+                    details={
+                        "cell_id": normalized_id,
+                        "index": index,
+                        "resolved_index": target_index,
+                    },
+                )
+        else:
+            if target_index is None:
+                raise ScratchNotebookError(
+                    VALIDATION_ERROR,
+                    "Either index or cell_id must be provided for replace operations",
+                )
+            if target_index < 0 or target_index >= len(current_pad.cells):
+                raise ScratchNotebookError(
+                    INVALID_INDEX,
+                    f"Cell index {target_index} out of range",
+                )
+            existing_cell = current_pad.cells[target_index]
+        assert target_index is not None
+        assert existing_cell is not None
         metadata_supplied = "metadata" in cell
-        new_cell = _build_cell(cell, index=index)
+        new_cell = _build_cell(cell, index=target_index)
         if not metadata_supplied:
             new_cell.metadata = dict(existing_cell.metadata)
         if new_cell.validate:
             registry = _extract_schema_registry(current_pad.metadata)
-            validation_results = await _ensure_cell_validation(new_cell, schemas=registry)
-        pad = storage.replace_cell(scratch_id, index, new_cell)
+            validation_results = await _ensure_cell_validation(
+                new_cell,
+                scratch_id=scratch_id,
+                schemas=registry,
+            )
+        pad = storage.replace_cell(scratch_id, target_index, new_cell)
         try:
             await search.reindex_pad(pad)
         except ScratchNotebookError as exc:
@@ -961,20 +1041,18 @@ async def _scratch_replace_cell_impl(
 @_shutdown_protected
 async def _scratch_validate_impl(
     scratch_id: str,
-    indices: list[int] | None = None,
+    indices: Sequence[int] | None = None,
+    cell_ids: Sequence[str] | None = None,
     *,
     context: Context | None = None,
 ) -> dict[str, Any]:
     storage = get_storage(context)
     pad = storage.read_scratchpad(scratch_id)
 
-    if indices:
-        try:
-            target_cells = _select_cells_by_indices(pad, indices)
-        except ScratchNotebookError as exc:
-            return failure(exc)
-    else:
-        target_cells = list(pad.cells)
+    try:
+        target_cells = _filter_cells(pad, indices=indices, cell_ids=cell_ids)
+    except ScratchNotebookError as exc:
+        return failure(exc)
 
     timeout_seconds: float | None = None
     if APP_STATE is not None:
@@ -1038,8 +1116,8 @@ scratch_read = SERVER.tool(
     description=(
         "Read a scratch notebook by id.\n\n"
         "Filters:\n"
-        "- indices: restrict to specific zero-based cell indices.\n"
-        "- cell_ids: restrict to explicit cell UUIDs (applied before tag filter).\n"
+        "- cell_ids (preferred): restrict to explicit cell UUIDs (applied before the tag filter so you can combine both).\n"
+        "- indices: legacy positional filter retained for backwards compatibility.\n"
         "- tags: return only cells whose tag set intersects the provided values.\n"
         "- namespaces: assert the pad belongs to one of the listed namespaces.\n"
         "- include_metadata (default true): set to false when only cell payloads are needed; canonical fields remain in the response."
@@ -1048,7 +1126,14 @@ scratch_read = SERVER.tool(
 
 scratch_list_cells = SERVER.tool(
     name="scratch_list_cells",
-    description="List cells for a scratch notebook",
+    description=(
+        "List cells for a scratchpad without streaming full content.\n\n"
+        "Filters:\n"
+        "- cell_ids (preferred): provide explicit cell UUIDs when you already know them.\n"
+        "- indices: legacy positional filter retained for backwards compatibility.\n"
+        "- tags: include only cells whose metadata tags intersect the provided values.\n"
+        "Each entry returns cell_id, index, language, tags, and any stored metadata so you can decide whether to fetch the full cell via scratch_read."
+    ),
 )(_scratch_list_cells_impl)
 
 scratch_delete = SERVER.tool(
@@ -1073,17 +1158,39 @@ scratch_list_tags = SERVER.tool(
 
 scratch_append_cell = SERVER.tool(
     name="scratch_append_cell",
-    description="Append a cell to the specified scratch notebook",
+    description=(
+        "Append a cell to a scratch notebook.\n\n"
+        "Payload:\n"
+        "- scratch_id: target notebook id.\n"
+        "- cell.language / cell.content: required fields describing the new cell.\n"
+        "- cell.validate (optional bool): when true the server runs advisory validation. Diagnostics are returned in the `validation` array alongside the updated pad and the cell is still persisted even when errors are reported.\n"
+        "- cell.json_schema (optional object or scratchpad:// reference): missing shared schemas generate warnings instead of blocking writes.\n"
+        "- cell.metadata.tags (optional): per-cell tags that participate in list/read filters.\n"
+        "Responses always include the updated scratchpad and, when validation ran, a `validation` array keyed by cell_id so agents can surface issues immediately."
+    ),
 )(_scratch_append_cell_impl)
 
 scratch_replace_cell = SERVER.tool(
     name="scratch_replace_cell",
-    description="Replace a cell in the specified scratch notebook",
+    description=(
+        "Replace an existing cell. Provide either `cell_id` (preferred) or `index`; if both are supplied the id wins and the index is sanity-checked.\n"
+        "When `validate` is true, diagnostics are advisory and returned alongside the updated pad just like append operations.\n"
+        "If you omit `metadata`, the server reuses the previous cell metadata (including tags) so replacements keep their context."
+    ),
 )(_scratch_replace_cell_impl)
 
 scratch_validate = SERVER.tool(
     name="scratch_validate",
-    description="Validate one or more cells within a scratch notebook",
+    description=(
+        "Validate one or more cells within a scratch notebook.\n\n"
+        "Filters:\n"
+        "- cell_ids (preferred): explicit list of cell UUIDs to re-check.\n"
+        "- indices: legacy positional filter retained for backwards compatibility; when used with cell_ids the intersection is validated.\n\n"
+        "Results:\n"
+        "- Each entry contains cell_id, index, language, errors, warnings, and structured `details`.\n"
+        "- Diagnostics are advisory only; use them to inform follow-up edits rather than treating them as blockers.\n"
+        "- If validation exceeds `validation_request_timeout`, the call fails with `VALIDATION_TIMEOUT` and no partial results."
+    ),
 )(_scratch_validate_impl)
 
 scratch_search = SERVER.tool(

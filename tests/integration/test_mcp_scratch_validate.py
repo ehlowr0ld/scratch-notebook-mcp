@@ -35,13 +35,14 @@ async def test_scratch_validate_returns_results_for_json_cell(app) -> None:
     create_resp = await _scratch_create_impl(metadata={"title": "validation"})
     scratch_id = create_resp["scratchpad"]["scratch_id"]
 
-    await _scratch_append_cell_impl(
+    append_resp = await _scratch_append_cell_impl(
         scratch_id,
         {
             "language": "json",
             "content": json.dumps({"value": 1}),
         },
     )
+    cell_id = append_resp["scratchpad"]["cells"][0]["cell_id"]
 
     initialize_app(app)
 
@@ -51,6 +52,7 @@ async def test_scratch_validate_returns_results_for_json_cell(app) -> None:
     results = validate_resp["results"]
     assert len(results) == 1
     assert results[0]["valid"] is True
+    assert results[0]["cell_id"] == cell_id
 
 
 @pytest.mark.asyncio
@@ -58,20 +60,21 @@ async def test_scratch_validate_with_indices_limits_scope(app) -> None:
     create_resp = await _scratch_create_impl(metadata={})
     scratch_id = create_resp["scratchpad"]["scratch_id"]
 
-    await _scratch_append_cell_impl(
+    first_append = await _scratch_append_cell_impl(
         scratch_id,
         {
             "language": "json",
             "content": json.dumps({"one": 1}),
         },
     )
-    await _scratch_append_cell_impl(
+    second_append = await _scratch_append_cell_impl(
         scratch_id,
         {
             "language": "json",
             "content": json.dumps({"two": 2}),
         },
     )
+    second_cell_id = second_append["scratchpad"]["cells"][1]["cell_id"]
 
     validate_resp = await _scratch_validate_impl(scratch_id, indices=[1])
 
@@ -79,6 +82,38 @@ async def test_scratch_validate_with_indices_limits_scope(app) -> None:
     results = validate_resp["results"]
     assert len(results) == 1
     assert results[0]["cell_index"] == 1
+    assert results[0]["cell_id"] == second_cell_id
+
+
+@pytest.mark.asyncio
+async def test_scratch_validate_with_cell_ids_limits_scope(app) -> None:
+    create_resp = await _scratch_create_impl(metadata={})
+    scratch_id = create_resp["scratchpad"]["scratch_id"]
+
+    first_append = await _scratch_append_cell_impl(
+        scratch_id,
+        {
+            "language": "json",
+            "content": json.dumps({"one": 1}),
+        },
+    )
+    second_append = await _scratch_append_cell_impl(
+        scratch_id,
+        {
+            "language": "json",
+            "content": json.dumps({"two": 2}),
+        },
+    )
+    target_cell_id = second_append["scratchpad"]["cells"][1]["cell_id"]
+    other_cell_id = first_append["scratchpad"]["cells"][0]["cell_id"]
+
+    validate_resp = await _scratch_validate_impl(scratch_id, cell_ids=[target_cell_id])
+
+    assert validate_resp["ok"] is True
+    results = validate_resp["results"]
+    assert len(results) == 1
+    assert results[0]["cell_id"] == target_cell_id
+    assert results[0]["cell_id"] != other_cell_id
 
 
 @pytest.mark.asyncio
@@ -98,6 +133,10 @@ async def test_append_with_validate_flag_returns_validation_summary(app) -> None
     assert append_resp["ok"] is True
     assert "validation" in append_resp
     assert append_resp["validation"][0]["valid"] is True
+    assert (
+        append_resp["validation"][0]["cell_id"]
+        == append_resp["scratchpad"]["cells"][0]["cell_id"]
+    )
 
 
 @pytest.mark.asyncio
@@ -114,12 +153,17 @@ async def test_append_with_validate_flag_rejects_invalid_payload(app) -> None:
         },
     )
 
-    assert append_resp["ok"] is False
-    assert append_resp["error"]["code"] == "VALIDATION_ERROR"
+    assert append_resp["ok"] is True
+    assert append_resp["validation"][0]["valid"] is False
+    assert append_resp["validation"][0]["errors"]
+    assert any(
+        "Invalid JSON" in error["message"]
+        for error in append_resp["validation"][0]["errors"]
+    )
 
-    # Ensure no cells were added on failure
+    # Ensure the cell was stored even when validation reported diagnostics
     read_resp = await _scratch_read_impl(scratch_id)
-    assert read_resp["scratchpad"]["cells"] == []
+    assert len(read_resp["scratchpad"]["cells"]) == 1
 
 
 @pytest.mark.asyncio
@@ -186,5 +230,10 @@ async def test_append_validate_flag_rejects_missing_shared_schema(app) -> None:
         },
     )
 
-    assert append_resp["ok"] is False
-    assert append_resp["error"]["code"] == "VALIDATION_ERROR"
+    assert append_resp["ok"] is True
+    assert append_resp["validation"][0]["valid"] is True
+    assert append_resp["validation"][0]["warnings"]
+    assert any(
+        "JSON schema reference" in warning["message"]
+        for warning in append_resp["validation"][0]["warnings"]
+    )

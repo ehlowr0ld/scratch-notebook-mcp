@@ -160,7 +160,7 @@ def _validate_json(
     schema_registry: Mapping[str, Mapping[str, Any]],
     schema_store: Mapping[str, Mapping[str, Any]],
 ) -> ValidationResult:
-    result = ValidationResult(cell_index=cell.index, language=cell.language)
+    result = ValidationResult(cell_index=cell.index, language=cell.language, cell_id=cell.cell_id)
     try:
         parsed = json.loads(cell.content)
     except json.JSONDecodeError as exc:
@@ -195,7 +195,7 @@ def _validate_yaml(
     schema_registry: Mapping[str, Mapping[str, Any]],
     schema_store: Mapping[str, Mapping[str, Any]],
 ) -> ValidationResult:
-    result = ValidationResult(cell_index=cell.index, language=cell.language)
+    result = ValidationResult(cell_index=cell.index, language=cell.language, cell_id=cell.cell_id)
     if yaml is None:
         global _yaml_missing_logged
         if not _yaml_missing_logged:
@@ -230,7 +230,7 @@ def _validate_yaml(
 
 
 def _validate_markdown(cell: ScratchCell) -> ValidationResult:
-    result = ValidationResult(cell_index=cell.index, language=cell.language)
+    result = ValidationResult(cell_index=cell.index, language=cell.language, cell_id=cell.cell_id)
     analyzer = getattr(markdown_analysis, "analyze", None)
     if analyzer is None:
         global _markdown_missing_logged
@@ -256,14 +256,14 @@ def _validate_markdown(cell: ScratchCell) -> ValidationResult:
 
 
 def _validate_plain_text(cell: ScratchCell) -> ValidationResult:
-    result = ValidationResult(cell_index=cell.index, language=cell.language)
+    result = ValidationResult(cell_index=cell.index, language=cell.language, cell_id=cell.cell_id)
     result.add_warning(NOT_VALIDATED_MESSAGE, code="VALIDATION_SKIPPED")
     result.details["reason"] = "Plain text does not require validation"
     return result
 
 
 def _validate_code(cell: ScratchCell) -> ValidationResult:
-    result = ValidationResult(cell_index=cell.index, language=cell.language)
+    result = ValidationResult(cell_index=cell.index, language=cell.language, cell_id=cell.cell_id)
     checker = _resolve_syntax_checker()
     if checker is None:
         global _syntax_checker_missing_logged
@@ -286,7 +286,7 @@ def _validate_code(cell: ScratchCell) -> ValidationResult:
 
 
 def _not_validated(cell: ScratchCell, message: str, *, code: str | None = None) -> ValidationResult:
-    result = ValidationResult(cell_index=cell.index, language=cell.language)
+    result = ValidationResult(cell_index=cell.index, language=cell.language, cell_id=cell.cell_id)
     result.add_warning(message, code=code)
     result.details.setdefault("reason", message)
     return result
@@ -397,10 +397,11 @@ def _coerce_json_schema_with_registry(
         return None, None
 
     if schema_ref and (registry is None or schema_ref not in registry):
-        result.add_error(
+        result.add_warning(
             f"JSON schema reference '{schema_ref}' not found in scratchpad metadata",
-            details={"reference": f"{SCHEMA_REF_PREFIX}{schema_ref}"},
+            code="SCHEMA_REFERENCE_MISSING",
         )
+        result.details["schema_ref"] = schema_ref
         return None, schema_ref
 
     return mapping, schema_ref

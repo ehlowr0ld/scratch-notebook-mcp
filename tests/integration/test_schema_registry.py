@@ -172,5 +172,6 @@ async def test_upserted_schema_integrates_with_validation(app) -> None:
             "validate": True,
         },
     )
-    assert invalid_append["ok"] is False
-    assert invalid_append["error"]["code"] == "VALIDATION_ERROR"
+    assert invalid_append["ok"] is True
+    assert invalid_append["validation"][0]["valid"] is False
+    assert invalid_append["validation"][0]["errors"]

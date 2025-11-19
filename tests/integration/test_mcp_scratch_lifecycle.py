@@ -76,11 +76,12 @@ async def test_full_scratchpad_lifecycle(app) -> None:
 
     replace_resp = await _scratch_replace_cell_impl(
         scratch_id,
-        0,
+        None,
         {
             "language": "json",
             "content": "{\"updated\": true}",
         },
+        cell_id=cells[0]["cell_id"],
     )
     assert replace_resp["ok"] is True
     replaced_cell = replace_resp["scratchpad"]["cells"][0]
