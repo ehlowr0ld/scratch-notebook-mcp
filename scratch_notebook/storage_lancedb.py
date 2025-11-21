@@ -187,6 +187,7 @@ class Storage:
             raise StorageError(CONFIG_ERROR, "Unable to open LanceDB database", details={"path": str(self._root)}) from exc
 
         self._table = self._ensure_table()
+        self._ensure_tenant_scalar_index()
         self._namespaces_table = self._ensure_namespaces_table()
         self._embeddings_table = None
         self._embedding_dimension = None
@@ -219,8 +220,19 @@ class Storage:
         if not desired or desired == DEFAULT_TENANT_ID:
             return []
 
-        arrow_table = self._table.to_arrow()
-        rows = arrow_table.to_pylist()
+        rows: list[dict[str, Any]] = []
+        where_clause = _format_filter("tenant_id", DEFAULT_TENANT_ID)
+        try:
+            query = self._table.search().where(where_clause).limit(None)
+            rows = query.to_arrow().to_pylist()
+        except Exception:  # pragma: no cover - falls back for older LanceDB versions
+            logger.debug("Default tenant migration falling back to full scan", exc_info=True)
+            full_rows = self._table.to_arrow().to_pylist()
+            for row in full_rows:
+                tenant_value = (row.get("tenant_id") or "").strip() or DEFAULT_TENANT_ID
+                if tenant_value == DEFAULT_TENANT_ID:
+                    rows.append(row)
+
         migrated: list[str] = []
         original_tenant = self._tenant_id
 
@@ -667,6 +679,18 @@ class Storage:
             return table
         return self._db.create_table(_NAMESPACES_TABLE_NAME, schema=_NAMESPACES_SCHEMA)
 
+    def _ensure_tenant_scalar_index(self) -> None:
+        if not hasattr(self._table, "create_scalar_index"):
+            return
+        try:
+            self._table.create_scalar_index("tenant_id")
+        except Exception as exc:  # pragma: no cover - index already exists or unsupported
+            message = str(exc).lower()
+            if "exists" in message or "duplicate" in message:
+                logger.debug("Scalar index for tenant_id already exists")
+                return
+            logger.warning("Unable to ensure tenant_id scalar index", exc_info=True)
+
     def _ensure_embedding_table(self, dimension: int | None = None):
         if self._embeddings_table is not None:
             table = self._embeddings_table
@@ -826,18 +850,30 @@ class Storage:
             return []
         dimension = len(query_vector)
         table = self._ensure_embedding_table(dimension)
-        fetch_count = max(limit * 3, limit)
-        query = table.search(list(query_vector), vector_column_name="embedding").metric("cosine").limit(fetch_count)
+        predicate_parts = [_format_filter("tenant_id", self._tenant_id)]
+        namespace_filter = {ns for ns in (namespaces or set()) if ns}
+        if namespace_filter:
+            joined = ", ".join(_quote_literal(ns) for ns in sorted(namespace_filter))
+            predicate_parts.append(f"namespace IN ({joined})")
+
+        oversample_factor = 3 if tags else 1
+        fetch_count = max(limit * oversample_factor, limit)
+
+        query = table.search(list(query_vector), vector_column_name="embedding").metric("cosine")
+        if predicate_parts:
+            where_clause = " AND ".join(predicate_parts)
+            query = self._apply_prefilter(query, where_clause)
+        query = query.limit(fetch_count)
         hits = query.to_list()
+
         if not namespaces and not tags:
             return hits[:limit]
 
         filtered: list[dict[str, Any]] = []
-        namespace_filter = namespaces or set()
         tag_filter = tags or set()
         for row in hits:
             if namespaces:
-                namespace_value = row.get("namespace") or ""
+                namespace_value = (row.get("namespace") or "").strip()
                 if namespace_value not in namespace_filter:
                     continue
             if tags:
@@ -848,6 +884,13 @@ class Storage:
             if len(filtered) >= limit:
                 break
         return filtered
+
+    def _apply_prefilter(self, query, where_clause: str):
+        try:
+            return query.where(where_clause, prefilter=True)
+        except Exception:  # pragma: no cover - LanceDB prior to prefilter support
+            logger.debug("Prefilter not supported for clause '%s'; continuing without pushdown", where_clause, exc_info=True)
+            return query
 
     def _capture_embeddings_rows(self, scratch_id: str) -> list[dict[str, Any]]:
         if self._embeddings_table is None and _EMBEDDINGS_TABLE_NAME not in set(self._db.table_names()):

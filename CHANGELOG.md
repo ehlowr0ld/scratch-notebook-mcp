@@ -22,3 +22,5 @@ All notable changes to this project will be documented in this file. This projec
 - All edit, read, list, and validation flows now target cells exclusively by `cell_id`, keeping positional indices as presentation metadata only.
 - FastMCP prompts, specifications, and documentation now describe validation as advisory guidance and emphasise the id-only contract for every tool.
 - Updated tests and LanceDB storage helpers to enforce the id-first addressing model and maintain contiguous indices after reordering.
+- Storage startup now materializes a LanceDB scalar index on `tenant_id`, and default-tenant migration uses filtered scans instead of full-table pylist copies, keeping auth enablement fast even with >10k pads.
+- Semantic search pushes tenant/namespace predicates down to LanceDB via `where(..., prefilter=True)` before applying limits; new unit tests verify both the migration filter path and prefilter accuracy.

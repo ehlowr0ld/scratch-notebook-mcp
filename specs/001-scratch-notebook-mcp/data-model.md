@@ -20,6 +20,7 @@ Canonical JSON Schemas are defined in `specs/scratch-notepad-tool.md` (see the "
   - Logical identifier; clients never see file paths.
 - `tenant_id: string`
   - Internal identifier derived from auth (or the implicit default tenant when auth is disabled).
+  - **Indexed**: A scalar index MUST be maintained on this column to ensure O(log N) performance for tenant-scoped operations, particularly during the startup migration check.
 - `namespace: string`
   - Case-sensitive label grouping scratchpads per tenant; defaults to a configured value (for example `"default"`).
 - `tags: string[]`
@@ -150,6 +151,7 @@ Canonical JSON Schemas are defined in `specs/scratch-notepad-tool.md` (see the "
 
 - `tenant_id: string`
 - `namespace: string`
+  - **Indexed (Implicit)**: While primarily a filter predicate, efficient lookups via pre-filtering or secondary indices are expected for semantic search performance.
 - Optional bookkeeping metadata (creation timestamp) used for ordering.
 
 ### 1.6 Semantic Search Result (`SearchHit`)

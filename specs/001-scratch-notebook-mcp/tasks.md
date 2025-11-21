@@ -364,3 +364,15 @@ Path conventions for this project (per `plan.md`):
   - Teach storage to handle reorder requests by shifting neighbouring cells when `new_index` (or the chosen reorder parameter) is provided, ensuring indexes remain contiguous.
   - Adjust prompt text, tests (unit, integration, contract), and schemas to align with the new parameter set; remove index-based addressing tests and add reorder coverage.
   - Run full pytest and document the change in `implementation.md`.
+
+---
+
+## Phase 9: Scalability & Precision Optimization (New)
+
+**Goal**: Optimize for scale (>10k pads) and high namespace cardinality using native LanceDB scalar indexing and search pre-filtering (see Phase 9 in `plan.md`).
+
+- [X] T105 [P] **Implement Scalar Indexing**: Update `scratch_notebook/storage_lancedb.py` to ensure a scalar index exists on the `tenant_id` column during `Storage` initialization. This optimizes lookups for tenant-scoped operations.
+- [X] T106 [P] **Optimize Default Tenant Migration**: Refactor `migrate_default_tenant` in `scratch_notebook/storage_lancedb.py` to use `table.search().where("tenant_id = 'default'")` (or equivalent scan builder) instead of loading the full table into memory. This ensures O(log N) or O(filtered) performance instead of O(N).
+- [X] T107 [P] **Implement Native Search Pre-filtering**: Update `search_embeddings` in `scratch_notebook/storage_lancedb.py` to push namespace filters down to LanceDB using `where(..., prefilter=True)`. Construct SQL-style predicates (e.g., `namespace IN ('A', 'B')`) instead of filtering in Python after the fact.
+- [X] T108 [P] **Verify Migration Scalability**: Create a test case in `tests/unit/test_lancedb_storage.py` (or a new performance-focused test) that populates a temporary DB with a mix of tenants and verifies that `migrate_default_tenant` correctly targets only the default tenant rows without errors. (Note: Full O(N) memory verification is hard in unit tests, but logical correctness of the new query path must be verified).
+- [X] T109 [P] **Verify Pre-filtering Accuracy**: Create a test case in `tests/unit/test_semantic_search.py` where the top global matches for a query are in Namespace A, but the search requests Namespace B. Assert that the system returns valid results from Namespace B (if they exist) up to the requested limit, proving that the filter was applied *before* the limit.

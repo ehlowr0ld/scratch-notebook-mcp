@@ -7,7 +7,7 @@ import pytest
 
 from scratch_notebook import load_config, models
 from scratch_notebook.errors import CAPACITY_LIMIT_REACHED, CONFIG_ERROR, INVALID_INDEX, NOT_FOUND, ScratchNotebookError
-from scratch_notebook.storage import Storage
+from scratch_notebook.storage import DEFAULT_TENANT_ID, Storage
 
 
 def _build_config(tmp_path, **overrides):
@@ -296,3 +296,33 @@ def test_schema_upsert_requires_name(tmp_path) -> None:
         storage.upsert_schema(pad.scratch_id, {"schema": {"type": "object"}})
 
     assert exc.value.code == CONFIG_ERROR
+
+
+def test_migrate_default_tenant_filters_only_default_rows(tmp_path) -> None:
+    cfg = _build_config(tmp_path)
+    storage = Storage(cfg)
+
+    default_ids: list[str] = []
+    for _ in range(2):
+        pad = _make_pad()
+        storage.create_scratchpad(pad)
+        default_ids.append(pad.scratch_id)
+
+    storage.set_tenant("tenant-other")
+    other_pad = _make_pad()
+    storage.create_scratchpad(other_pad)
+
+    storage.set_tenant(DEFAULT_TENANT_ID)
+    migrated = storage.migrate_default_tenant("tenant-alpha")
+
+    assert set(migrated) == set(default_ids)
+
+    rows = storage._table.to_arrow().to_pylist()
+    tenant_map = {
+        str(row.get("scratch_id")): (row.get("tenant_id") or DEFAULT_TENANT_ID)
+        for row in rows
+        if row.get("scratch_id")
+    }
+    for pad_id in default_ids:
+        assert tenant_map[pad_id] == "tenant-alpha"
+    assert tenant_map[other_pad.scratch_id] == "tenant-other"

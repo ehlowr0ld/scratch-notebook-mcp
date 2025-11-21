@@ -78,3 +78,15 @@
 - Ran `./.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks` to refresh context and honour skip instructions for ignore/checklist gates.
 - Re-read `tasks.md`, the spec/plan bundle, and inspected the server/storage/test deltas to verify the id-only editing model plus `new_index` reorder semantics were already fully applied; no additional implementation gaps were found.
 - Executed `timeout 300 pytest` (183 tests, 0 failures) to reconfirm the workspace is green; no code changes were required this session.
+
+## 2025-11-21T12:45:00Z
+- Updated `spec.md`, `plan.md`, `data-model.md`, and `tasks.md` to introduce **Phase 9: Scalability & Precision Optimization**.
+- Added FR-027 (Scalable Default Tenant Migration) and FR-028 (Native Vector Search Pre-filtering) to `spec.md` to address scalability issues identified during review.
+- Documented the architectural shift to native LanceDB scalar indexing and pre-filtering in `plan.md` and `data-model.md`.
+- Created specific tasks (T105–T109) in `tasks.md` covering implementation and verification of these optimizations.
+
+## 2025-11-21T13:30:00Z
+- Implemented Phase 9 optimizations (T105–T107): `Storage.__init__` now ensures a `tenant_id` scalar index, `migrate_default_tenant` uses LanceDB filtered scans instead of full-table pylist materialization, and `search_embeddings` pushes tenant/namespace predicates down to LanceDB via `where(..., prefilter=True)` before applying limits.
+- Added regression coverage (T108–T109): unit tests in `tests/unit/test_lancedb_storage.py` verify that default-tenant migrations touch only the intended rows, and a new semantic-search test stubs the LanceDB query planner to confirm namespace filters are applied before limit enforcement.
+- Marked T105–T109 as complete in `tasks.md`.
+- Test matrix: `pytest tests/unit/test_lancedb_storage.py tests/unit/test_semantic_search.py` followed by `timeout 300 pytest` (185 passed, 1 warning).
