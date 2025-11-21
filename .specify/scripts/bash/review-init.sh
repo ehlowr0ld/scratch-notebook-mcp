@@ -87,6 +87,12 @@ FEATURE_DIR="$(cd "${FEATURE_DIR}" && pwd)"
 
 resolve_commit() {
   local ref="$1"
+  # Allow the Git empty tree SHA for full-history reviews
+  if [[ "${ref}" == "4b825dc642cb6eb9a060e54bf8d69288fbee4904" ]]; then
+    echo "${ref}"
+    return 0
+  fi
+
   if ! git rev-parse --verify "${ref}^{commit}" >/dev/null 2>&1; then
     echo "ERROR: unable to resolve commit for '${ref}'" >&2
     exit 2
