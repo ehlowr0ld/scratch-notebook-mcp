@@ -5,6 +5,7 @@ import json
 import pytest
 
 from scratch_notebook import load_config
+from scratch_notebook import validation as validation_module
 from scratch_notebook.server import (
     initialize_app,
     _scratch_append_cell_impl,
@@ -12,6 +13,7 @@ from scratch_notebook.server import (
     _scratch_read_impl,
     _scratch_validate_impl,
 )
+from scratch_notebook.validation import NOT_VALIDATED_MESSAGE, SYNTAX_CHECK_SKIPPED_MESSAGE
 
 
 @pytest.fixture
@@ -172,7 +174,7 @@ async def test_validate_reports_plain_text_warning(app) -> None:
 
     assert validate_resp["ok"] is True
     warnings = validate_resp["results"][0]["warnings"]
-    assert any("Validation not performed" in warning["message"] for warning in warnings)
+    assert any(NOT_VALIDATED_MESSAGE in warning["message"] for warning in warnings)
 
 
 @pytest.mark.asyncio
@@ -226,3 +228,60 @@ async def test_append_validate_flag_rejects_missing_shared_schema(app) -> None:
         "JSON schema reference" in warning["message"]
         for warning in append_resp["validation"][0]["warnings"]
     )
+
+
+@pytest.mark.asyncio
+async def test_validate_surfaces_missing_schema_reference_warnings(app) -> None:
+    if validation_module.jsonschema is None:
+        pytest.skip("jsonschema not available in runtime")
+
+    create_resp = await _scratch_create_impl(metadata={"schemas": {}})
+    scratch_id = create_resp["scratchpad"]["scratch_id"]
+
+    await _scratch_append_cell_impl(
+        scratch_id,
+        {
+            "language": "json",
+            "content": json.dumps({"value": 9}),
+            "json_schema": "scratchpad://schemas/not-there",
+        },
+    )
+
+    validate_resp = await _scratch_validate_impl(scratch_id)
+
+    assert validate_resp["ok"] is True
+    warning_messages = validate_resp["results"][0]["warnings"]
+    assert any("JSON schema reference" in warning["message"] for warning in warning_messages)
+    read_resp = await _scratch_read_impl(scratch_id)
+    assert len(read_resp["scratchpad"]["cells"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_append_validate_for_missing_code_checker_only_warns(
+    app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(validation_module, "syntax_checker", None, raising=False)
+
+    create_resp = await _scratch_create_impl(metadata={})
+    scratch_id = create_resp["scratchpad"]["scratch_id"]
+
+    append_resp = await _scratch_append_cell_impl(
+        scratch_id,
+        {
+            "language": "py",
+            "content": "def main():\n    return 1",
+            "validate": True,
+        },
+    )
+
+    assert append_resp["ok"] is True
+    warnings = append_resp["validation"][0]["warnings"]
+    assert any(SYNTAX_CHECK_SKIPPED_MESSAGE in warning["message"] for warning in warnings)
+
+    validate_resp = await _scratch_validate_impl(scratch_id)
+
+    assert validate_resp["ok"] is True
+    validate_warnings = validate_resp["results"][0]["warnings"]
+    assert any(SYNTAX_CHECK_SKIPPED_MESSAGE in warning["message"] for warning in validate_warnings)
+    read_resp = await _scratch_read_impl(scratch_id)
+    assert len(read_resp["scratchpad"]["cells"]) == 1

@@ -54,8 +54,8 @@ Other handy switches:
 
 ## Everyday Tool Flow
 
-- **Create and curate** – `scratch_create` opens a new pad, `scratch_delete` removes it, and `scratch_list` shows every pad with lean metadata so assistants can jump to the right one. `scratch_list_cells` peeks at cell summaries without fetching full content.
-- **Edit with guardrails** – `scratch_append_cell` and `scratch_replace_cell` extend notebooks cell by cell. Set the `validate` flag when you want the server to run JSON/YAML/code/markdown checks before content is saved; validation is advisory only, your notes are never discarded because of diagnostics. `scratch_replace_cell` also accepts `new_index` so you can reorder a cell while updating it.
+- **Create and curate** – `scratch_create` opens a new pad (optionally seeding it with a `cells` array that persists atomically), `scratch_delete` removes it, and `scratch_list` shows every pad with lean metadata so assistants can jump to the right one. `scratch_list_cells` peeks at cell summaries without fetching full content, and write responses themselves already stick to structural data (ids/indices/metadata) so you can stay within token budgets—call `scratch_read` whenever you need the full payload.
+- **Edit with guardrails** – `scratch_append_cell` and `scratch_replace_cell` extend notebooks cell by cell. Set the `validate` flag when you want the server to run JSON/YAML/code/markdown checks before content is saved; validation is advisory only, your notes are never discarded because of diagnostics. `scratch_replace_cell` also accepts `new_index` so you can reorder a cell while updating it. Write responses mirror `scratch_create` by omitting raw `content`; follow up with `scratch_read` if the assistant needs to re-display the entire cell.
 - **Review and filter** – `scratch_read` returns the full pad and lets agents filter by `cell_ids`, tags, or namespaces. Indices are still returned in responses so you can display ordering, but edits and validations always target cells by `cell_id`. `scratch_list_tags` surfaces the tag vocabulary, and `scratch_list_schemas` + `scratch_get_schema` reveal shared schema helpers.
 - **Validate on demand** – `scratch_validate` re-checks any subset of cells (supply `cell_ids`, or omit to validate all), returning structured results so assistants can highlight issues without changing stored content. Indices still appear in responses for reference, but selectors must always be `cell_id`s.
 - **Search and navigate** – `scratch_search` uses semantic embeddings to find related notes. Namespace helpers (`scratch_namespace_list/create/rename/delete`) keep multi-project work segregated.
@@ -64,6 +64,17 @@ Other handy switches:
 ## Need Developer Details?
 
 Contributor notes, architecture decisions, and testing instructions live in `DEVELOPMENT.md`. Agent-facing prompts and workflow guidance live in `AGENTS.md`.
+
+## Release Hygiene
+
+Before tagging a build or publishing a new binary, run the coverage gate and record any lingering gaps:
+
+```bash
+python -m coverage run -m pytest
+python -m coverage report -m
+```
+
+Treat uncovered advisory-validation branches as action items—log them in `specs/001-scratch-notebook-mcp/implementation.md` and schedule new tasks in `specs/001-scratch-notebook-mcp/tasks.md` so future releases stay honest about validation guarantees.
 
 ## License
 

@@ -85,8 +85,32 @@
 - Documented the architectural shift to native LanceDB scalar indexing and pre-filtering in `plan.md` and `data-model.md`.
 - Created specific tasks (T105–T109) in `tasks.md` covering implementation and verification of these optimizations.
 
+## 2025-11-21T14:10:00Z
+- Implemented Phase 10 (T110–T114): `scratch_create` now accepts an optional `cells` array that seeds pads atomically, storage reuses the existing transaction path to persist both the pad and its initial cells, and write responses (create/append/replace) now return lightweight structural summaries (ids/indices/language/metadata/tags/validation) while omitting cell `content`.
+- Extended FastMCP tool schemas/descriptions plus the spec bundle (`specs/scratch-notepad-tool.md`, `data-model.md`, `quickstart.md`, README/DEVELOPMENT) to document the new input contract and the context-friendly response shape; `scratchpad` cell schema now treats `content` as optional outside of `scratch_read`.
+- Added integration coverage in `tests/integration/test_mcp_scratch_lifecycle.py` for seeded creation and rollback on invalid cells; updated existing lifecycle assertions to expect structural write responses and verify content via `scratch_read`.
+- Test matrix: `pytest tests/integration/test_mcp_scratch_lifecycle.py` followed by full `timeout 300 pytest` (185 passed, 1 warning).
+
 ## 2025-11-21T13:30:00Z
 - Implemented Phase 9 optimizations (T105–T107): `Storage.__init__` now ensures a `tenant_id` scalar index, `migrate_default_tenant` uses LanceDB filtered scans instead of full-table pylist materialization, and `search_embeddings` pushes tenant/namespace predicates down to LanceDB via `where(..., prefilter=True)` before applying limits.
 - Added regression coverage (T108–T109): unit tests in `tests/unit/test_lancedb_storage.py` verify that default-tenant migrations touch only the intended rows, and a new semantic-search test stubs the LanceDB query planner to confirm namespace filters are applied before limit enforcement.
 - Marked T105–T109 as complete in `tasks.md`.
 - Test matrix: `pytest tests/unit/test_lancedb_storage.py tests/unit/test_semantic_search.py` followed by `timeout 300 pytest` (185 passed, 1 warning).
+
+## 2025-11-21T16:05:00Z
+- Ran `python -m coverage run -m pytest` followed by `python -m coverage report -m` (187 tests, overall 92% coverage) to establish a baseline for Phase 10 verification. Noted remaining gaps concentrated in `scratch_notebook/validation.py`.
+- Scheduled Phase 11 (Validation Coverage & Tooling) in `tasks.md` with new tasks T115–T117 and captured the plan rationale inside `plan.md` to track the upcoming coverage-focused work.
+- Added `coverage>=7.0,<8` to the `dev` optional dependency set in `pyproject.toml` and documented the standardized coverage workflow in `DEVELOPMENT.md` so future runs no longer require ad hoc installs.
+- Updated `AGENTS.md` supplementary references to explicitly instruct agents to read `DEVELOPMENT.md` at the start of every development cycle since the file is not surfaced automatically by SpecKit.
+- Updated `CHANGELOG.md` to capture the coverage tooling changes under `v0.1.0`.
+
+## 2025-11-21T17:40:00Z
+- Implemented Phase 11 tasks (T115–T117):
+  - Added regression coverage to `tests/unit/test_validation_code_markdown.py`, `tests/unit/test_validation_json_yaml.py`, and `tests/unit/test_validation_fallbacks.py` for markdown analyzer failures, schema reference fallbacks, mixed warning/error diagnostics, and plain-text advisory details.
+  - Extended `tests/integration/test_mcp_scratch_validate.py` so unresolved schema references and missing syntax-checker backends return warnings without blocking writes.
+  - Updated `README.md`, `DEVELOPMENT.md`, `specs/001-scratch-notebook-mcp/plan.md`, and `CHANGELOG.md` with the mandated coverage workflow/release gate; marked the Phase 11 tasks complete in `tasks.md`.
+- Test matrix: `python -m coverage run -m pytest` (193 passed, 1 warning) followed by `python -m coverage report -m` (overall 92% coverage). Logged coverage summary for release hygiene.
+
+## 2025-11-21T18:10:00Z
+- Updated `scratch_notebook/server.py` to replace concise description strings with comprehensive, agent-oriented usage guidance for all MCP tools.
+- Refreshed `CHANGELOG.md` (v0.1.0) to reflect the prompt refinement work.

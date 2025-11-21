@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from scratch_notebook import models
-from scratch_notebook.validation import JSON_SCHEMA_SKIPPED_MESSAGE, validate_cell
+from scratch_notebook.validation import JSON_SCHEMA_SKIPPED_MESSAGE, NOT_VALIDATED_MESSAGE, validate_cell
 
 
 def _cell(language: str, content: str, **kwargs) -> models.ScratchCell:
@@ -46,3 +46,13 @@ def test_json_schema_skipped_when_library_missing(monkeypatch: pytest.MonkeyPatc
 
     assert result.valid is True
     assert any(JSON_SCHEMA_SKIPPED_MESSAGE in warning["message"] for warning in result.warnings)
+
+
+def test_plain_text_validation_includes_reason_detail() -> None:
+    cell = _cell("txt", "notes go here")
+
+    result = validate_cell(cell)
+
+    assert result.valid is True
+    assert any(NOT_VALIDATED_MESSAGE in warning["message"] for warning in result.warnings)
+    assert result.details.get("reason") == "Plain text does not require validation"
