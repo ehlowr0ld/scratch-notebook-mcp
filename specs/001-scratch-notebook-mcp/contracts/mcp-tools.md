@@ -40,12 +40,20 @@ Create or reset a scratchpad identified by `scratch_id`.
   - `tags: string[]` – Scratchpad-level tags.
   - `schemas: object` – Shared schema registry map (per FR-017).
   - Additional keys are stored and returned verbatim; clients may attach arbitrary metadata when useful.
+- `cells: object[]` (optional) – List of initial cells to create immediately within the scratchpad. Each element matches the structure used in `scratch_append_cell`:
+  - `language: string` (required)
+  - `content: string` (required)
+  - `validate: boolean` (optional)
+  - `json_schema: object|string` (optional)
+  - `metadata: object` (optional)
+  - `tags: string[]` (optional)
 
 **Response (success)**
 
 - `ok: true`
 - `scratchpad: Scratchpad` (see `data-model.md`)
-  - `cells` will be an empty array.
+  - `cells` array containing the created cells (including generated `cell_id`s and `index`es).
+  - **CRITICAL**: To conserve context window, the response MUST NOT include the `content` of the cells. It MUST returns only structural info (`cell_id`, `index`, `language`, `type`) and metadata/validation status.
   - Canonical fields (`title`, `description`, optional `summary`, `namespace`, `tags`, `cell_tags`) appear both at the top level and within `metadata`.
 - `evicted_scratchpads: string[]` (optional) – Present when the `discard` eviction policy removes existing pads to satisfy `max_scratchpads`; lists each evicted scratchpad id.
 
@@ -117,6 +125,7 @@ Append a new cell to the end of a scratchpad.
 
 - `ok: true`
 - `scratchpad: Scratchpad` (including the new cell at the last index).
+  - **CRITICAL**: The `cells` list in this response MUST be "lightweight" (metadata only). It MUST NOT include `content` for any cell, including the newly appended one.
 
 **Response (failure)**
 
@@ -147,6 +156,7 @@ Replace an existing cell with new content and optionally move it to a new positi
 
 - `ok: true`
 - `scratchpad: Scratchpad` (with the cell at `index` replaced).
+  - **CRITICAL**: The `cells` list in this response MUST be "lightweight" (metadata only). It MUST NOT include `content` for any cell.
 
 **Response (failure)**
 

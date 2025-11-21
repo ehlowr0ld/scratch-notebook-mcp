@@ -46,7 +46,7 @@ Always refresh context using the feature specification directory `specs/001-scra
 
 Supplementary references:
 - Repository root `README.md` for enduser instructions and non-technical documentation.
-- `DEVELOPMENT.md` for developer workflow specifics.
+- `DEVELOPMENT.md` for developer workflow specifics. **This file is not surfaced automatically—every time you start a dev cycle, open and read `DEVELOPMENT.md` after the spec bundle so you have the latest release checklist, coverage workflow, and coding conventions.**
 - `AGENTS.md` for agent workflow specifics. Update this file when agent-specific instructions change or new instructions are needed!
 
 ## 5. Project Modules and Responsibilities

@@ -69,6 +69,7 @@ async def test_full_scratchpad_lifecycle(app) -> None:
     assert len(cells) == 1
     assert cells[0]["index"] == 0
     assert cells[0]["language"] == "json"
+    assert "content" not in cells[0]
     assert cells[0]["metadata"]["tags"] == ["payload"]
     assert cells[0]["tags"] == ["payload"]
     assert append_resp["scratchpad"]["tags"] == ["alpha", "payload"]
@@ -84,7 +85,7 @@ async def test_full_scratchpad_lifecycle(app) -> None:
     )
     assert replace_resp["ok"] is True
     replaced_cell = replace_resp["scratchpad"]["cells"][0]
-    assert replaced_cell["content"] == "{\"updated\": true}"
+    assert "content" not in replaced_cell
     assert "cell_tags" in replace_resp["scratchpad"]["metadata"]
     assert replace_resp["scratchpad"]["tags"] == ["alpha", "payload"]
     assert replace_resp["scratchpad"]["cells"][0]["tags"] == ["payload"]
@@ -100,6 +101,7 @@ async def test_full_scratchpad_lifecycle(app) -> None:
     assert read_resp["scratchpad"]["tags"] == ["alpha", "payload"]
     assert read_resp["scratchpad"]["cell_tags"] == ["payload"]
     assert read_resp["scratchpad"]["cells"][0]["tags"] == ["payload"]
+    assert read_resp["scratchpad"]["cells"][0]["content"] == "{\"updated\": true}"
 
     list_resp = await _scratch_list_impl()
     assert list_resp["ok"] is True
@@ -119,3 +121,61 @@ async def test_full_scratchpad_lifecycle(app) -> None:
     missing_resp = await _scratch_read_impl(scratch_id)
     assert missing_resp["ok"] is False
     assert missing_resp["error"]["code"] == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_scratch_create_with_initial_cells(app) -> None:
+    metadata = {
+        "title": "Seeded Pad",
+        "description": "Created with two initial cells",
+        "namespace": "labs",
+    }
+    create_resp = await _scratch_create_impl(
+        metadata=metadata,
+        cells=[
+            {
+                "language": "json",
+                "content": "{\"value\": 1}",
+                "metadata": {"tags": ["json"]},
+            },
+            {
+                "language": "md",
+                "content": "# Heading",
+                "validate": False,
+            },
+        ],
+    )
+    assert create_resp["ok"] is True
+    scratchpad = create_resp["scratchpad"]
+    cell_summaries = scratchpad["cells"]
+    assert len(cell_summaries) == 2
+    for idx, entry in enumerate(cell_summaries):
+        assert entry["index"] == idx
+        assert "cell_id" in entry
+        assert "content" not in entry
+    assert scratchpad["metadata"]["title"] == "Seeded Pad"
+    scratch_id = scratchpad["scratch_id"]
+
+    read_resp = await _scratch_read_impl(scratch_id)
+    assert read_resp["ok"] is True
+    read_cells = read_resp["scratchpad"]["cells"]
+    assert len(read_cells) == 2
+    assert read_cells[0]["content"] == "{\"value\": 1}"
+    assert read_cells[1]["content"] == "# Heading"
+
+
+@pytest.mark.asyncio
+async def test_scratch_create_invalid_cell_rolls_back(app) -> None:
+    resp = await _scratch_create_impl(
+        scratch_id="invalid-pad",
+        cells=[
+            {
+                "language": "json",
+                # Missing content should trigger validation error
+            }
+        ],
+    )
+    assert resp["ok"] is False
+    read_resp = await _scratch_read_impl("invalid-pad")
+    assert read_resp["ok"] is False
+    assert read_resp["error"]["code"] == "NOT_FOUND"

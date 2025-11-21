@@ -27,6 +27,7 @@ Canonical JSON Schemas are defined in `specs/scratch-notepad-tool.md` (see the "
   - Scratchpad-level labels used for filtering and discovery.
 - `cells: ScratchCell[]`
   - Ordered list of cells.
+  - `scratch_create` may receive an initial `cells` array; the storage layer persists the pad and all supplied cells atomically, assigning contiguous indices and generated `cell_id` values in a single transaction.
 - `metadata: object` (optional)
   - Scratchpad-level metadata; stored and returned but only partially interpreted by the server.
   - Canonical fields (all strings):
@@ -47,6 +48,10 @@ Canonical JSON Schemas are defined in `specs/scratch-notepad-tool.md` (see the "
 - See `scratch-notepad-tool.md` section "Scratchpad Notebook (v2)" (`scratchpad-v2.json`), which defines:
   - Required: `scratch_id`, `cells`.
   - Optional: `metadata` with open-ended properties.
+
+- **Response views**
+  - `scratch_read` returns the full scratchpad payload, including each cell's `content`.
+  - Write operations (`scratch_create`, `scratch_append_cell`, `scratch_replace_cell`) return a lightweight structural summary (ids, indices, language, metadata/tags, validation flags) to conserve context window. Clients that need the new content immediately should issue `scratch_read`.
 
 ### 1.2 Scratch Cell (`ScratchCell`)
 

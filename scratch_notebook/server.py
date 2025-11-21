@@ -525,8 +525,31 @@ def _build_cell(payload: Mapping[str, Any], *, index: int | None = None) -> Scra
         raise ScratchNotebookError(VALIDATION_ERROR, str(exc)) from exc
 
 
-def _build_response_pad(pad: Scratchpad, *, include_metadata: bool = True) -> dict[str, Any]:
+def _structural_cell_payload(cell: ScratchCell) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "cell_id": cell.cell_id,
+        "index": cell.index,
+        "language": cell.language,
+        "validate": cell.validate,
+    }
+    tags = cell.metadata.get("tags")
+    if tags:
+        entry["tags"] = list(tags)
+    metadata = dict(cell.metadata)
+    if metadata:
+        entry["metadata"] = metadata
+    return entry
+
+
+def _build_response_pad(
+    pad: Scratchpad,
+    *,
+    include_metadata: bool = True,
+    include_content: bool = True,
+) -> dict[str, Any]:
     payload = pad.to_dict()
+    if not include_content:
+        payload["cells"] = [_structural_cell_payload(cell) for cell in pad.cells]
     if not include_metadata:
         payload.pop("metadata", None)
     return {"scratchpad": payload}
@@ -722,11 +745,13 @@ async def _scratch_list_cells_impl(
 async def _scratch_create_impl(
     scratch_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
+    cells: Sequence[Mapping[str, Any]] | None = None,
     *,
     context: Context | None = None,
 ) -> dict[str, Any]:
     storage = get_storage(context)
     search = get_search_service(context)
+    validation_results: list[ValidationResult] = []
 
     try:
         if scratch_id is None:
@@ -741,7 +766,29 @@ async def _scratch_create_impl(
         except Exception as exc:  # pragma: no cover - defensive
             raise ScratchNotebookError(VALIDATION_ERROR, "Metadata must be an object") from exc
 
-        pad = Scratchpad(scratch_id=scratch_id, cells=[], metadata=metadata_payload)
+        try:
+            cell_payloads = list(cells or [])
+        except TypeError as exc:
+            raise ScratchNotebookError(VALIDATION_ERROR, "cells must be an array of objects") from exc
+
+        built_cells: list[ScratchCell] = []
+        for idx, cell_payload in enumerate(cell_payloads):
+            if not isinstance(cell_payload, Mapping):
+                raise ScratchNotebookError(VALIDATION_ERROR, "Each cell must be an object")
+            built_cells.append(_build_cell(cell_payload, index=idx))
+
+        registry = _extract_schema_registry(metadata_payload)
+        for cell_entry in built_cells:
+            if cell_entry.validate:
+                validation_results.extend(
+                    await _ensure_cell_validation(
+                        cell_entry,
+                        scratch_id=scratch_id,
+                        schemas=registry,
+                    )
+                )
+
+        pad = Scratchpad(scratch_id=scratch_id, cells=built_cells, metadata=metadata_payload)
         pad = storage.create_scratchpad(pad, overwrite=False)
         try:
             await search.reindex_pad(pad)
@@ -756,7 +803,9 @@ async def _scratch_create_impl(
             await search.delete_pad_embeddings(scratch_id)
             LOGGER.exception("Failed to index scratchpad %s", scratch_id, exc_info=exc)
             return failure(ScratchNotebookError(INTERNAL_ERROR, "Semantic index failed"))
-        payload = _build_response_pad(pad)
+        payload = _build_response_pad(pad, include_content=False)
+        if validation_results:
+            payload["validation"] = [result.to_dict() for result in validation_results]
         evicted_ids = storage.pop_recent_evictions()
         if evicted_ids:
             for victim in evicted_ids:
@@ -918,7 +967,7 @@ async def _scratch_append_cell_impl(
                 storage.restore_snapshot(snapshot_state)
             LOGGER.exception("Failed to index scratchpad %s", scratch_id, exc_info=exc)
             return failure(ScratchNotebookError(INTERNAL_ERROR, "Semantic index failed"))
-        payload = _build_response_pad(pad)
+        payload = _build_response_pad(pad, include_content=False)
         if validation_results:
             payload["validation"] = [result.to_dict() for result in validation_results]
         response = success(payload)
@@ -1002,7 +1051,7 @@ async def _scratch_replace_cell_impl(
                 storage.restore_snapshot(snapshot_state)
             LOGGER.exception("Failed to index scratchpad %s", scratch_id, exc_info=exc)
             return failure(ScratchNotebookError(INTERNAL_ERROR, "Semantic index failed"))
-        payload = _build_response_pad(pad)
+        payload = _build_response_pad(pad, include_content=False)
         if validation_results:
             payload["validation"] = [result.to_dict() for result in validation_results]
         response = success(payload)
@@ -1068,121 +1117,160 @@ async def _scratch_search_impl(
 scratch_create = SERVER.tool(
     name="scratch_create",
     description=(
-        "Create or reset a scratch notebook.\n\n"
-        "Parameters:\n"
-        "- scratch_id (optional string): supply to reuse a deterministic identifier; omit to auto-generate.\n"
-        "- metadata (object): include canonical fields so downstream tools stay informative:\n"
-        "    - title: concise (≤60 characters), action-oriented label (e.g. 'Incident response checklist').\n"
-        "    - description: one–two sentences summarising intent for humans choosing a pad.\n"
-        "    - summary: optional terse, search-friendly synopsis (key nouns/verbs, minimal filler).\n"
-        "    - namespace: string namespace registered via scratch_namespace_* (defaults to tenant namespace).\n"
-        "    - tags: array of scratchpad-level tags used by list/search filters.\n"
-        "  Additional metadata keys are stored verbatim.\n\n"
-        "Namespace conventions:\n"
-        "- Call scratch_namespace_list before creating a pad to discover existing project prefixes (e.g. 'proj-omega/').\n"
-        "- Reuse an existing prefix verbatim; only create a new namespace when you are sure a new project boundary is needed.\n"
-        "- Staying consistent keeps multiple assistants sharing the default tenant from stepping on each other's work."
+        "Create or reset a long-lived scratch notebook for your current task. "
+        "Use this as your primary working memory for multi-step work instead of ad-hoc notes: each notebook groups related "
+        "cells (markdown, code, JSON/YAML, text) plus canonical metadata (title, description, optional summary, namespace, tags). "
+        "Provide `scratch_id` only when you must reuse a deterministic identifier; otherwise omit it and the server allocates one. "
+        "Optionally seed the notebook with a `cells` array that follows the `scratch_append_cell` shape so you can atomically create an "
+        "initial plan, goals, or examples. "
+        "Follow up with `scratch_append_cell` to grow the notebook, `scratch_read` to view full content, and `scratch_list_cells` for "
+        "lightweight overviews. "
+        "Call `scratch_namespace_list` before creating a pad to discover or create project-specific namespaces and keep notebooks "
+        "partitioned by project."
     ),
 )(_scratch_create_impl)
 
 scratch_read = SERVER.tool(
     name="scratch_read",
     description=(
-        "Read a scratch notebook by id.\n\n"
-        "Filters:\n"
-        "- cell_ids (preferred): restrict to explicit cell UUIDs (applied before the tag filter so you can combine both).\n"
-        "- tags: return only cells whose tag set intersects the provided values.\n"
-        "- namespaces: assert the pad belongs to one of the listed namespaces.\n"
-        "- include_metadata (default true): set to false when only cell payloads are needed; canonical fields remain in the response.\n"
-        "Responses always include indices for ordering context, but `cell_id` is the sole identifier for subsequent edits."
+        "Read a scratch notebook by id as part of an ongoing task. Prefer this over generic document fetches whenever you "
+        "need structured cells plus metadata. "
+        "Use the `cell_ids` filter (preferred) when you need explicit cell UUIDs, for example those discovered via "
+        "`scratch_list_cells` or `scratch_search`; this filter applies before tags so you can combine both. Provide `tags` to "
+        "return only cells whose metadata tags intersect the supplied values, and `namespaces` to assert that the pad lives inside "
+        "one of the allowed namespaces (otherwise the call fails with `UNAUTHORIZED`). "
+        "Set `include_metadata=false` when you only need cell payloads; canonical metadata remains available via `scratch_list` or "
+        "a follow-up read. Responses always include indices for ordering context, but `cell_id` remains the sole identifier for "
+        "follow-up edits via `scratch_append_cell` and `scratch_replace_cell`."
     ),
 )(_scratch_read_impl)
 
 scratch_list_cells = SERVER.tool(
     name="scratch_list_cells",
     description=(
-        "List cells for a scratchpad without streaming full content.\n\n"
-        "Filters:\n"
-        "- cell_ids (preferred): provide explicit cell UUIDs when you already know them.\n"
-        "- tags: include only cells whose metadata tags intersect the provided values.\n"
-        "Each entry returns cell_id, index, language, tags, and any stored metadata so you can decide whether to fetch the full cell via scratch_read."
+        "List cells for a scratchpad without streaming full content. Use this as your index view: each entry returns `cell_id`, "
+        "index, language, tags, and any stored metadata so you can decide which cells to read or replace. "
+        "Treat `cell_ids` as a filter when you already know the targets (exact UUID matches) and combine with tag filters to "
+        "intersect metadata tags with your selectors. "
+        "Typical workflows: call `scratch_list_cells` after `scratch_create`, `scratch_list`, or `scratch_search` to locate a "
+        "plan, goals, or summary cell, then use `scratch_read` or `scratch_replace_cell` on the chosen `cell_id`."
     ),
 )(_scratch_list_cells_impl)
 
 scratch_delete = SERVER.tool(
     name="scratch_delete",
-    description="Delete a scratch notebook by id",
+    description=(
+        "Delete a scratch notebook by id. Use this for short-lived or noisy notebooks that you are confident will not be reused. "
+        "Consider listing candidate pads via `scratch_list` first and preserving notebooks that still provide historical context, "
+        "design decisions, or incident timelines."
+    ),
 )(_scratch_delete_impl)
 
 scratch_list = SERVER.tool(
     name="scratch_list",
     description=(
-        "List scratchpads with lean metadata suitable for navigation.\n\n"
-        "Each entry returns scratch_id, title, description, namespace, and cell_count. Use scratch_read for full metadata or summaries."
+        "List scratchpads with lean metadata suitable for navigation between notebooks. Each entry returns `scratch_id`, title, "
+        "description, namespace, and `cell_count`. Use this to choose which notebook to open with `scratch_read` or "
+        "`scratch_list_cells`. "
+        "Filter by `namespaces` to stay inside a project, and by `tags` to focus on particular kinds of notebooks (for example "
+        "`design`, `incident`, `research`); use `limit` to cap results when a namespace holds many notebooks."
     ),
 )(_scratch_list_impl)
 
 scratch_list_tags = SERVER.tool(
     name="scratch_list_tags",
     description=(
-        "List scratchpad-level and cell-level tags, optionally filtered by namespace."
+        "List scratchpad-level and cell-level tags, optionally filtered by namespace. Use this to discover and standardize the "
+        "tag vocabulary you rely on in `scratch_append_cell`, `scratch_replace_cell`, `scratch_list`, `scratch_list_cells`, "
+        "and `scratch_search`. "
+        "`scratchpad_tags` reflects tags declared on notebook metadata; `cell_tags` aggregates tags discovered on individual cells."
     ),
 )(_scratch_list_tags_impl)
 
 scratch_append_cell = SERVER.tool(
     name="scratch_append_cell",
     description=(
-        "Append a cell to a scratch notebook.\n\n"
-        "Payload:\n"
-        "- scratch_id: target notebook id.\n"
-        "- cell.language / cell.content: required fields describing the new cell.\n"
-        "- cell.validate (optional bool): when true the server runs advisory validation. Diagnostics are returned in the `validation` array alongside the updated pad and the cell is still persisted even when errors are reported.\n"
-        "- cell.json_schema (optional object or scratchpad:// reference): missing shared schemas generate warnings instead of blocking writes.\n"
-        "- cell.metadata.tags (optional): per-cell tags that participate in list/read filters.\n"
-        "Responses always include the updated scratchpad and, when validation ran, a `validation` array keyed by cell_id so agents can surface issues immediately."
+        "Append a new cell to a scratch notebook. This is the primary way to grow your notebook during a task: provide the target "
+        "`scratch_id`, set `cell.language` and `cell.content`, and store per-cell tags in `cell.metadata.tags` (for example "
+        "`plan`, `hypothesis`, `snippet`, `example`, `summary`). "
+        "Set `cell.validate=true` when you want advisory validation diagnostics returned alongside the updated pad. "
+        "`cell.json_schema` can reference inline schemas or `scratchpad://schemas/<name>` entries managed by `scratch_upsert_schema`; "
+        "missing shared schemas produce warnings rather than blocking writes. "
+        "Responses echo structural data (ids, indices, language, metadata, tags, validation summaries) but omit raw cell content; "
+        "call `scratch_read` whenever you need the full notebook payload."
     ),
 )(_scratch_append_cell_impl)
 
 scratch_replace_cell = SERVER.tool(
     name="scratch_replace_cell",
     description=(
-        "Replace an existing cell by `cell_id`. Use `new_index` to reorder the cell explicitly while keeping indices as ordering metadata only.\n"
-        "When `validate` is true, diagnostics are advisory and returned alongside the updated pad just like append operations.\n"
-        "If you omit `metadata`, the server reuses the previous cell metadata (including tags) so replacements keep their context."
+        "Replace an existing cell by `cell_id` when you want to update or reorder information without losing the surrounding "
+        "notebook context. Use this instead of `scratch_append_cell` when you are refining an existing plan, decision, or example. "
+        "`new_index` lets you move the cell explicitly while keeping indices as ordering metadata only, for example pinning "
+        "goals and summary cells near the top. "
+        "If you omit `metadata` in the replacement payload, the server reuses the previous cell metadata (including tags) so "
+        "replacements keep their classification. "
+        "When `validate` is true, diagnostics are advisory and returned alongside the updated pad just like append operations. "
+        "Responses mirror append and create behavior by returning structural data without cell content; use `scratch_read` to "
+        "inspect the updated payload when needed."
     ),
 )(_scratch_replace_cell_impl)
 
 scratch_validate = SERVER.tool(
     name="scratch_validate",
     description=(
-        "Validate one or more cells within a scratch notebook.\n\n"
-        "Filters:\n"
-        "- cell_ids: explicit list of cell UUIDs to re-check.\n\n"
-        "Results:\n"
-        "- Each entry contains cell_id, index, language, errors, warnings, and structured `details`.\n"
-        "- Diagnostics are advisory only; use them to inform follow-up edits rather than treating them as blockers.\n"
-        "- If validation exceeds `validation_request_timeout`, the call fails with `VALIDATION_TIMEOUT` and no partial results."
+        "Validate one or more cells within a scratch notebook. Use this for structured content (JSON, YAML, markdown, code) before "
+        "you promote examples or configs into your codebase. "
+        "Pass explicit `cell_ids` to filter the validation target set (for example only cells tagged `example` or `config`); omit "
+        "the filter to re-check every cell in the pad. Validation uses any shared schemas registered via `scratch_upsert_schema` "
+        "and attached to the notebook. "
+        "Results contain `cell_id`, index, language, errors, warnings, and structured `details`, and diagnostics remain advisory "
+        "so you can persist cells even when issues are reported. If validation exceeds `validation_request_timeout`, the call "
+        "fails with `VALIDATION_TIMEOUT` and no partial results."
     ),
 )(_scratch_validate_impl)
 
 scratch_search = SERVER.tool(
     name="scratch_search",
-    description="Perform semantic search across scratchpads and cells",
+    description=(
+        "Perform semantic search across scratchpads and cells. Use this as your primary way to rediscover prior work instead of "
+        "relying on memory or listing all notebooks. "
+        "Provide a natural language `query` and optionally filter by `namespaces` (project) and `tags` (for example `design`, "
+        "`incident`, `summary`). Results include `scratch_id`, `cell_id`, `namespace`, tags, relevance `score`, and a `snippet` "
+        "so you can quickly decide which notebook to open next. "
+        "After finding a hit, call `scratch_read` or `scratch_list_cells` on the returned `scratch_id` and use `cell_ids` to "
+        "narrow to the specific cells of interest."
+    ),
 )(_scratch_search_impl)
 
 scratch_list_schemas = SERVER.tool(
     name="scratch_list_schemas",
-    description="List shared schemas attached to a scratch notebook",
+    description=(
+        "List shared JSON Schemas attached to a scratch notebook. Use this alongside `scratch_upsert_schema` and `scratch_get_schema` "
+        "to manage the schema registry that structured cells reference via `cell.json_schema`. "
+        "These schemas support validation behavior in `scratch_append_cell`, `scratch_replace_cell`, and `scratch_validate`."
+    ),
 )(_scratch_list_schemas_impl)
 
 scratch_get_schema = SERVER.tool(
     name="scratch_get_schema",
-    description="Fetch a shared schema definition by id",
+    description=(
+        "Fetch a shared schema definition by id from a scratch notebook. Use this to inspect the JSON Schema object and its "
+        "metadata (`id`, `name`, `description`, `schema`) before attaching it to new cells via `cell.json_schema` or modifying "
+        "it via `scratch_upsert_schema`."
+    ),
 )(_scratch_get_schema_impl)
 
 scratch_upsert_schema = SERVER.tool(
     name="scratch_upsert_schema",
-    description="Create or update a shared schema definition on a scratch notebook",
+    description=(
+        "Create or update a shared JSON Schema definition on a scratch notebook. Use this to maintain the schema registry that "
+        "structured cells refer to via `cell.json_schema`. "
+        "Each entry includes an `id` (UUID), optional logical `name` for intra-notebook references, a human-readable `description`, "
+        "and a JSON Schema object. "
+        "Updated schemas influence subsequent validation behavior in `scratch_append_cell`, `scratch_replace_cell`, and "
+        "`scratch_validate` for JSON and YAML cells that reference them."
+    ),
 )(_scratch_upsert_schema_impl)
 
 _SCRATCH_CREATE_METADATA_SCHEMA = {
@@ -1207,6 +1295,44 @@ _SCRATCH_CREATE_METADATA_SCHEMA = {
     "additionalProperties": True,
 }
 
+_CELL_INPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "cell_id": {
+            "type": "string",
+            "description": "Optional cell identifier. When omitted, the server generates a UUID.",
+        },
+        "language": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Language/format of the cell content.",
+        },
+        "content": {
+            "type": "string",
+            "description": "Raw cell content as text.",
+        },
+        "validate": {
+            "type": "boolean",
+            "default": False,
+            "description": "Set true to request advisory validation before the cell is stored.",
+        },
+        "json_schema": {
+            "description": "Optional JSON Schema applied to JSON/YAML cells.",
+            "oneOf": [
+                {"type": "object"},
+                {"type": "string"},
+            ],
+        },
+        "metadata": {
+            "type": "object",
+            "description": "Per-cell metadata (for example `tags`, `note`).",
+            "additionalProperties": True,
+        },
+    },
+    "required": ["language", "content"],
+}
+
 scratch_create.parameters = {
     "type": "object",
     "properties": {
@@ -1218,6 +1344,17 @@ scratch_create.parameters = {
             ],
             "default": None,
             "description": "Optional metadata payload including canonical fields.",
+        },
+        "cells": {
+            "anyOf": [
+                {
+                    "type": "array",
+                    "items": _CELL_INPUT_SCHEMA,
+                },
+                {"type": "null"},
+            ],
+            "default": None,
+            "description": "Optional list of cells persisted atomically during creation. Cells follow the same structure used by scratch_append_cell.",
         },
     },
     "additionalProperties": True,
@@ -1354,7 +1491,11 @@ async def _scratch_namespace_delete_impl(
 
 scratch_namespace_list = SERVER.tool(
     name="scratch_namespace_list",
-    description="List namespaces available to the current tenant.",
+    description=(
+        "List namespaces available to the current tenant. Use this at the start of a session to discover project prefixes before "
+        "calling `scratch_create` or `scratch_list`. Reusing existing namespaces keeps related notebooks grouped and simplifies "
+        "later filtering in `scratch_list`, `scratch_search`, and `scratch_list_tags`."
+    ),
 )(_scratch_namespace_list_impl)
 
 scratch_namespace_list.parameters = {
@@ -1393,7 +1534,11 @@ scratch_namespace_list.output_schema = {
 
 scratch_namespace_create = SERVER.tool(
     name="scratch_namespace_create",
-    description="Register a namespace string for the current tenant.",
+    description=(
+        "Register a namespace string for the current tenant. Use this when you are intentionally starting a new project boundary "
+        "and want future notebooks created via `scratch_create` to be scoped to that namespace. "
+        "Prefer reusing existing namespaces discovered via `scratch_namespace_list` unless there is a clear need for separation."
+    ),
 )(_scratch_namespace_create_impl)
 
 scratch_namespace_create.parameters = {
@@ -1430,7 +1575,12 @@ scratch_namespace_create.output_schema = {
 
 scratch_namespace_rename = SERVER.tool(
     name="scratch_namespace_rename",
-    description="Rename an existing namespace.",
+    description=(
+        "Rename an existing namespace, optionally migrating scratchpads that reference it. Use this when project or product names "
+        "change and you want notebooks, `scratch_list`, and `scratch_search` queries to follow the new naming. "
+        "When `migrate_scratchpads` is true (the default), scratchpads that referenced the old namespace are updated to the new "
+        "one."
+    ),
 )(_scratch_namespace_rename_impl)
 
 scratch_namespace_rename.parameters = {
@@ -1477,7 +1627,12 @@ scratch_namespace_rename.output_schema = {
 
 scratch_namespace_delete = SERVER.tool(
     name="scratch_namespace_delete",
-    description="Delete a namespace, optionally cascading to scratchpads.",
+    description=(
+        "Delete a namespace, optionally cascading deletion to associated scratchpads. Use this sparingly when decommissioning an "
+        "entire project. "
+        "Consider calling `scratch_list` first to review notebooks in the namespace. When `delete_scratchpads` is true, notebooks "
+        "referencing the namespace are removed; when false, only the namespace registration is removed."
+    ),
 )(_scratch_namespace_delete_impl)
 
 scratch_namespace_delete.parameters = {
