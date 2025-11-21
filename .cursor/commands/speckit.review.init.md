@@ -19,7 +19,8 @@ You MUST consider the user input before proceeding (if not empty).
    - Immediately determine the commit boundaries and branch for this review:
      - If the user specifies boundaries use them as is. If the user provides partial boundaries flag this and stop the workflow.
      - If the user doesn't specify boundaries use the range between origin branch and local branch both matching the name of the current branch.
-     - If there is no remote branch in origin with matching name use the last commit on the local branch as the subject to review.
+     - If the user implies a review from the origin of the branch (start of history), use the Git Empty Tree SHA (`4b825dc642cb6eb9a060e54bf8d69288fbee4904`) as the base.
+     - If there is no remote branch in origin with matching name the local HEAD as the head.
    - If any of these commands fail, pause and fix the repository state before continuing.
 
 2. Choose a deterministic `RUN_ID` (example: `review-20251108-main-001`) and reuse it for the entire run.

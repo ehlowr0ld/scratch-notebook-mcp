@@ -114,5 +114,6 @@ def test_json_schema_reference_reports_missing_definition() -> None:
     if result.warnings and any(JSON_SCHEMA_SKIPPED_MESSAGE in warning["message"] for warning in result.warnings):
         pytest.skip("jsonschema not available in runtime")
 
-    assert result.valid is False
-    assert any("schema reference" in error["message"] for error in result.errors)
+    assert result.valid is True
+    assert any("schema reference" in warning["message"] for warning in result.warnings)
+    assert result.details.get("schema_ref") == "unknown"

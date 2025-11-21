@@ -99,7 +99,7 @@ scratch_notebook/                 # Python package root (editable install / loca
 ├── models.py                     # in-memory/domain models (Scratchpad, Cell, ValidationResult)
 ├── storage.py                    # LanceDB-backed persistence layer for scratchpads, namespaces, schemas, embeddings
 ├── search.py                     # Semantic search orchestration (embedding generation + LanceDB vector queries)
-├── namespaces.py                 # Namespace registry management and cascading delete helpers
+├── namespaces.py                 # Namespace orchestration (list/create/rename/delete)
 ├── validation.py                 # orchestration of jsonschema, PyYAML, syntax-checker, markdown-analysis
 ├── eviction.py                   # capacity limit, discard/fail/preempt policies and sweeper
 ├── transports/
@@ -177,3 +177,21 @@ Use a single Python package `scratch_notebook` within this repository to impleme
 
 - Primary keys (`scratch_id`, `cell_id`, `namespace`) are enforced at the LanceDB level. Attempted duplicates raise an error that MUST be turned into `INVALID_ID` for clients.
 - Namespace names are unique per tenant; normalization/validation (trim whitespace, forbid empty strings) happens before insertion.
+
+## Phase 9: Scalability & Precision Optimization
+
+**Goal**: Improve performance and accuracy for large-scale (>10k pads) and high-cardinality (many namespaces) deployments by leveraging native LanceDB indexing and pre-filtering. (See `specs/001-scratch-notebook-mcp/research.md` Section 5 for technical implementation details and code examples).
+
+### Key Improvements
+
+1.  **Scalable Default Tenant Migration**:
+    *   **Issue**: Currently performs a full table scan O(N) at startup.
+    *   **Resolution**: Create a scalar index on `tenant_id` and use LanceDB's `search()` API with a filter predicate (`tenant_id = 'default'`) to retrieve only relevant rows (O(log N)).
+2.  **Native Vector Search Pre-filtering**:
+    *   **Issue**: Post-filtering in Python can return zero results if top K global matches are in excluded namespaces.
+    *   **Resolution**: Push `namespace IN (...)` predicates down to LanceDB using the `prefilter=True` argument (or SQL `where` clause). This ensures the limit applies only to valid candidates.
+
+### Testing Strategy
+
+*   **Migration Test**: Verify that `migrate_default_tenant` correctly identifies and updates only `default` tenant rows without touching others, even in a mixed-tenant database.
+*   **Pre-filtering Test**: Seed a database with highly similar documents in Namespace A and Namespace B. Query with a filter for Namespace B. Verify that the system returns K results from Namespace B, even if Namespace A has "better" raw vector matches.

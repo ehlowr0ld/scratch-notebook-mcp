@@ -54,12 +54,12 @@ Other handy switches:
 
 ## Everyday Tool Flow
 
-- **`scratch_create`** – Open or reset a pad with descriptive metadata so future searches stay meaningful.
-- **`scratch_append_cell` / `scratch_replace_cell`** – Grow the notebook cell-by-cell while validation keeps content safe.
-- **`scratch_read`** – Revisit work, optionally filtering by cell ids, tags, or namespaces and choosing whether to pull back metadata.
-- **`scratch_list` and `scratch_list_cells`** – Browse pads or zoom into cell detail when choosing what to reuse.
-- **`scratch_namespace_*` & tagging tools** – Keep projects separated and curated.
-- **`scratch_search`** – Find the right snippet even when only a fuzzy memory remains.
+- **Create and curate** – `scratch_create` opens a new pad, `scratch_delete` removes it, and `scratch_list` shows every pad with lean metadata so assistants can jump to the right one. `scratch_list_cells` peeks at cell summaries without fetching full content.
+- **Edit with guardrails** – `scratch_append_cell` and `scratch_replace_cell` extend notebooks cell by cell. Set the `validate` flag when you want the server to run JSON/YAML/code/markdown checks before content is saved; validation is advisory only, your notes are never discarded because of diagnostics. `scratch_replace_cell` also accepts `new_index` so you can reorder a cell while updating it.
+- **Review and filter** – `scratch_read` returns the full pad and lets agents filter by `cell_ids`, tags, or namespaces. Indices are still returned in responses so you can display ordering, but edits and validations always target cells by `cell_id`. `scratch_list_tags` surfaces the tag vocabulary, and `scratch_list_schemas` + `scratch_get_schema` reveal shared schema helpers.
+- **Validate on demand** – `scratch_validate` re-checks any subset of cells (supply `cell_ids`, or omit to validate all), returning structured results so assistants can highlight issues without changing stored content. Indices still appear in responses for reference, but selectors must always be `cell_id`s.
+- **Search and navigate** – `scratch_search` uses semantic embeddings to find related notes. Namespace helpers (`scratch_namespace_list/create/rename/delete`) keep multi-project work segregated.
+- **Schema registry** – `scratch_upsert_schema` lets assistants register JSON Schemas once and reference them from future cells via `scratchpad://schemas/<name>`; missing schemas simply produce validation warnings.
 
 ## Need Developer Details?
 
@@ -67,4 +67,4 @@ Contributor notes, architecture decisions, and testing instructions live in `DEV
 
 ## License
 
-This project is currently unpublished; consult the repository owner before redistributing.
+Current release: **v0.1.0** — see `CHANGELOG.md` for the detailed history. This repository remains unpublished; consult the owner before redistributing.

@@ -50,14 +50,14 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
     - If a cell has `language: "json"`:
       - Parse `content` with `json.loads()`.
       - If `json_schema` is present, validate using `jsonschema.validate(instance=data, schema=schema)`.
-      - Errors from `JSONDecodeError` or `ValidationError` are mapped into `ValidationResult.errors`.
-    - Shared schemas: scratchpad metadata may expose a `schemas` map; when a cell's `json_schema` contains `{"$ref": "scratchpad://schemas/<name>"}`, the resolver loads the referenced schema from that map before calling `jsonschema.validate()`. Missing references produce a `VALIDATION_ERROR` with a clear diagnostic.
+      - Diagnostics from `JSONDecodeError` or `ValidationError` are mapped into `ValidationResult.errors` and `warnings` but do not block writes; validation is advisory.
+    - Shared schemas: scratchpad metadata may expose a `schemas` map; when a cell's `json_schema` contains `{"$ref": "scratchpad://schemas/<name>"}`, the resolver loads the referenced schema from that map before calling `jsonschema.validate()`. Missing references produce a warning attached to the `ValidationResult` (including the unresolved reference) but never prevent the cell from being stored.
 
 - **YAML parsing and schema validation**:
   - Use `PyYAML` (`yaml.safe_load`) for syntax parsing.
   - If `json_schema` is present and the YAML parses, use `jsonschema.validate()` (with the same `referencing` registry support as JSON) on the resulting object.
   - Errors (syntax or schema) are mapped into `ValidationResult.errors` with code such as `SCHEMA_ERROR` or `SYNTAX_ERROR`.
-  - Shared schema references resolve the same way as JSON, using the scratchpad metadata registry and failing validation if unresolved.
+  - Shared schema references resolve the same way as JSON, using the scratchpad metadata registry; missing references produce a warning attached to the `ValidationResult` (including the unresolved reference) but never prevent the cell from being stored.
 
 ### 3.2 Code Languages (Via `syntax-checker`)
 
@@ -94,7 +94,7 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
   - Implementations may store validation results or return them inline; the canonical detailed results are from `scratch_validate`.
 
 - **Manual (`scratch_validate`)**:
-  - Accepts a `scratch_id` and optional `indices`.
+  - Accepts a `scratch_id` and optional `cell_ids`.
   - Validates all or specified cells, returning a `results` array of `ValidationResult` objects, as defined in `scratch-notepad-tool.md`.
 
 ## 4. Storage And Persistence
@@ -125,6 +125,8 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
 - Updates apply via `delete + write` semantics within a single committed transaction to maintain atomicity across scratchpad, cell, and embedding tables.
 - Namespace create/rename/delete operations update both `namespaces` and `scratchpads` tables, cascading deletes when requested.
 - Tag mutations update scratchpad-level `tags` and ensure derived `cell_tags_cache` matches union of cell tags.
+- Cell targeting for mutations (replace, validate, delete) MUST rely exclusively on `cell_id`. Indices are recomputed for ordering purposes only.
+- Reordering is explicit: when a client supplies a `new_index` for a replacement, the storage layer shifts neighbouring cells to keep indices contiguous while updating the targeted cell's `index`.
 
 ### 4.4 Durability
 
@@ -143,9 +145,79 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
 - The `embeddings` table stores vector data plus scalar metadata (tenant, namespace, tags, language, last_updated) so LanceDB can pre-filter hits before running distance calculations.
 - Queries call `table.search(query_vector, filter=...)` with filters derived from namespace/tag parameters. Returned hits are merged with scratchpad metadata to produce response payloads with snippets and similarity scores.
 
-## 5. Capacity, Eviction, And Retention
+## 5. Scalability and Precision Optimizations (Phase 9)
 
-### 5.1 Capacity Limit
+**Cross-References**:
+*   Specification: **FR-027** (Scalable Default Tenant Migration) and **FR-028** (Native Vector Search Pre-filtering) in `spec.md`.
+*   Tasks: **T105–T109** in `tasks.md`.
+
+### 5.1 Scalar Indexing for Startup Performance
+
+**Problem**: Loading the entire scratchpad table into memory to find `default` tenant rows (O(N)) is unacceptable at scale (>10k rows).
+**Solution**: Create a scalar index on `tenant_id` and use LanceDB's filtered search API to retrieve only relevant rows (O(log N) or O(filtered)).
+
+**Implementation Details**:
+*   The index should be created during `Storage.__init__` if it doesn't exist.
+*   LanceDB's `create_scalar_index` may raise an error if the index already exists; implementations should check or wrap in try/except.
+
+**Example Code (Migration Refactoring)**:
+
+```python
+# Before (O(N)):
+# rows = self._table.to_arrow().to_pylist()
+# default_rows = [r for r in rows if r["tenant_id"] == DEFAULT_TENANT_ID]
+
+# After (O(log N)):
+# Ensure index exists (idempotent check)
+try:
+    self._table.create_scalar_index("tenant_id")
+except Exception:
+    pass  # Index likely exists
+
+# Perform filtered search without vector query
+# limit=None ensures we get all matching rows for migration
+results = (
+    self._table.search()
+    .where(f"tenant_id = '{DEFAULT_TENANT_ID}'")
+    .limit(None)
+    .to_arrow()
+)
+default_rows = results.to_pylist()
+```
+
+### 5.2 Native Pre-filtering for Search Accuracy
+
+**Problem**: Fetching `limit * 3` results and filtering in Python yields zero results if the top matches belong to excluded namespaces, even if valid matches exist further down the list.
+**Solution**: Push the namespace/tag predicates down to LanceDB so it filters the candidate list *before* applying the limit.
+
+**Implementation Details**:
+*   Use the `where(predicate, prefilter=True)` method in the search builder.
+*   Construct a SQL-compatible string for the predicate (e.g., `namespace IN ('planning', 'design')`).
+
+**Example Code (Search Refactoring)**:
+
+```python
+# Construct SQL predicate
+filters = [f"tenant_id = '{tenant_id}'"]
+if namespaces:
+    # Escape strings safely (simplified example)
+    ns_list = ", ".join(f"'{ns}'" for ns in namespaces)
+    filters.append(f"namespace IN ({ns_list})")
+
+where_clause = " AND ".join(filters)
+
+# Execute search with native pre-filtering
+results = (
+    self._embeddings_table.search(query_vector)
+    .where(where_clause, prefilter=True)
+    .limit(limit)
+    .to_list()
+)
+```
+
+## 6. Capacity, Eviction, And Retention
+
+### 6.1 Capacity Limit
 
 - Configurable `max_scratchpads` (integer; `0` means unlimited; default `1024`).
 - Capacity is defined in terms of scratchpad count, not total storage size.
@@ -155,13 +227,13 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
     - `fail`: reject the new creation without eviction, returning `CAPACITY_LIMIT_REACHED`.
     - `preempt`: background sweeper removes stale scratchpads regardless of instantaneous capacity (see below).
 
-### 5.2 Eviction Ordering (Discard)
+### 6.2 Eviction Ordering (Discard)
 
 - In `discard` mode:
   - Use a least-recently-used policy based on last read/write access timestamp, with ties broken by oldest creation time.
   - When eviction happens, the creation response must indicate that it occurred and which scratchpads were removed.
 
-### 5.3 Preemptive Sweeper (`preempt`)
+### 6.3 Preemptive Sweeper (`preempt`)
 
 - When `eviction_policy = "preempt"`:
   - A background sweeper runs at interval `preempt_interval` (default 10 minutes):
@@ -171,16 +243,16 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
     - `preempt_age` uses the same time suffix format; default unit is hours when no suffix is provided.
   - The sweeper operates regardless of current `max_scratchpads` occupancy; it may delete scratchpads even when under capacity, but must never delete scratchpads more recent than `preempt_age`.
 
-### 5.4 Size Limits
+### 6.4 Size Limits
 
 - In addition to `max_scratchpads`, the server should support:
   - `max_cells_per_pad` (0 = unlimited; default around 1024).
   - `max_cell_bytes` (0 = unlimited; default around 1 MiB).
 - If an operation would exceed these limits, it fails with a clear error and does not partially apply changes.
 
-## 6. Transports, Auth, And Config
+## 7. Transports, Auth, And Config
 
-### 6.1 Transports
+### 7.1 Transports
 
 - **Stdio MCP**:
   - Always supported; can be disabled only by configuration if desired, but default is enabled for local use.
@@ -196,7 +268,7 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
   - Transports can be enabled/disabled individually:
     - `enable_stdio`, `enable_http`, `enable_sse`.
 
-### 6.2 Auth And Tenant Isolation
+### 7.2 Auth And Tenant Isolation
 
 - Default single-user mode:
   - When bound only to `127.0.0.1` and `enable_http`/`enable_sse` are used for local tools, the server may run without explicit auth.
@@ -206,7 +278,7 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
   - Each scratchpad is associated with an authenticated principal; all operations must enforce that only the owning principal can see or manipulate its scratchpads.
   - The server must not reveal existence of other tenants' scratchpads based on guessed UUIDs alone.
 
-### 6.3 Configuration Sources
+### 7.3 Configuration Sources
 
 - Command-line flags, environment variables, and optional JSON config file:
   - Config file must be valid JSON with a mapping of options; numeric-like strings must be parsed to numeric types, failing on invalid or empty values.
@@ -232,9 +304,9 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
   - Per NFR-015, configuration is loaded at startup only.
   - No hot reload is required; config changes take effect after restart.
 
-## 7. Observability, Logging, And Metrics
+## 8. Observability, Logging, And Metrics
 
-### 7.1 Logging
+### 8.1 Logging
 
 - Logging must be:
   - Structured and machine parsable.
@@ -250,7 +322,7 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
   - At minimum: `NOT_FOUND`, `INVALID_ID`, `INVALID_INDEX`, `CAPACITY_LIMIT_REACHED`, `VALIDATION_ERROR`, `VALIDATION_TIMEOUT`, `CONFIG_ERROR`, `INTERNAL_ERROR`.
   - All error responses and log records must include a code and message.
 
-### 7.2 Metrics
+### 8.2 Metrics
 
 - Optional `/metrics` endpoint:
   - If enabled, exposed on the HTTP listener at `/metrics`.
@@ -258,11 +330,11 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
   - Includes at least:
     - Total scratch operations by type (create/read/append/replace/delete/list/validate).
     - Total errors.
-    - Total evictions (discard vs preempt).
+    - Total evictions (discard/preempt).
     - Uptime in seconds.
   - This endpoint is not required but recommended for long-running deployments.
 
-## 8. Shutdown Semantics
+## 9. Shutdown Semantics
 
 - **Graceful shutdown**:
   - On shutdown signal:
@@ -273,7 +345,7 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
 
 - This behaviour is essential to maintain consistency (especially given durability guarantees) while not blocking shutdown indefinitely.
 
-## 9. Open Questions And Implementation Risks
+## 10. Open Questions And Implementation Risks
 
 Non-blocking but notable implementation risks:
 
