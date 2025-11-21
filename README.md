@@ -17,13 +17,13 @@ Scratch Notebook MCP keeps your AI assistant grounded. It offers named scratchpa
    ```json
    {
      "mcpServers": {
-       "scratch-notebook-mcp": {
+       "scratchpad": {
          "command": "uvx",
          "args": [
-           "--from=https://github.com/ehlowr0ld/scratch-notebook-mcp",
+           "--from=git+https://github.com/ehlowr0ld/scratch-notebook-mcp",
            "scratch-notebook",
            "--storage-dir",
-           "/tmp/scratch-notebook-data"
+           "${workspaceFolder}/.scratch-notebook/data"
          ],
          "env": {
            "SCRATCH_NOTEBOOK_ENABLE_STDIO": "true",
