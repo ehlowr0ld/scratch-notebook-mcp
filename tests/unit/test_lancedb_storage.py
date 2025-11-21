@@ -7,7 +7,7 @@ import pytest
 
 from scratch_notebook import load_config, models
 from scratch_notebook.errors import CAPACITY_LIMIT_REACHED, CONFIG_ERROR, INVALID_INDEX, NOT_FOUND, ScratchNotebookError
-from scratch_notebook.storage import Storage
+from scratch_notebook.storage import DEFAULT_TENANT_ID, Storage
 
 
 def _build_config(tmp_path, **overrides):
@@ -106,10 +106,33 @@ def test_append_and_replace_roundtrip(tmp_path) -> None:
         content=json.dumps({"value": 2}),
         metadata={"tags": ["gamma"]},
     )
-    replaced = storage.replace_cell(pad.scratch_id, 0, replacement)
+    replaced = storage.replace_cell(pad.scratch_id, appended.cells[0].cell_id, replacement)
 
     assert replaced.cells[0].content == json.dumps({"value": 2})
     assert replaced.cells[0].metadata["tags"] == ["gamma"]
+
+
+def test_replace_cell_with_new_index_reorders(tmp_path) -> None:
+    cfg = _build_config(tmp_path)
+    storage = Storage(cfg)
+
+    pad = _make_pad(cell_count=3)
+    storage.create_scratchpad(pad)
+    target_id = pad.cells[0].cell_id
+
+    replacement = models.ScratchCell(
+        cell_id=target_id,
+        index=0,
+        language="json",
+        content=json.dumps({"moved": True}),
+        metadata={"tags": ["moved"]},
+    )
+
+    updated = storage.replace_cell(pad.scratch_id, target_id, replacement, new_index=2)
+
+    assert [cell.index for cell in updated.cells] == [0, 1, 2]
+    assert updated.cells[2].cell_id == target_id
+    assert updated.cells[2].metadata["tags"] == ["moved"]
 
 
 def test_list_scratchpads_returns_minimal_fields_sorted(tmp_path) -> None:
@@ -247,9 +270,9 @@ def test_replace_missing_cell_raises(tmp_path) -> None:
     storage.create_scratchpad(pad)
 
     with pytest.raises(ScratchNotebookError) as exc:
-        storage.replace_cell(pad.scratch_id, 0, _make_cell(0))
+        storage.replace_cell(pad.scratch_id, "missing-cell", _make_cell(0))
 
-    assert exc.value.code == INVALID_INDEX
+    assert exc.value.code == NOT_FOUND
 
 
 def test_get_missing_scratchpad_raises(tmp_path) -> None:
@@ -273,3 +296,33 @@ def test_schema_upsert_requires_name(tmp_path) -> None:
         storage.upsert_schema(pad.scratch_id, {"schema": {"type": "object"}})
 
     assert exc.value.code == CONFIG_ERROR
+
+
+def test_migrate_default_tenant_filters_only_default_rows(tmp_path) -> None:
+    cfg = _build_config(tmp_path)
+    storage = Storage(cfg)
+
+    default_ids: list[str] = []
+    for _ in range(2):
+        pad = _make_pad()
+        storage.create_scratchpad(pad)
+        default_ids.append(pad.scratch_id)
+
+    storage.set_tenant("tenant-other")
+    other_pad = _make_pad()
+    storage.create_scratchpad(other_pad)
+
+    storage.set_tenant(DEFAULT_TENANT_ID)
+    migrated = storage.migrate_default_tenant("tenant-alpha")
+
+    assert set(migrated) == set(default_ids)
+
+    rows = storage._table.to_arrow().to_pylist()
+    tenant_map = {
+        str(row.get("scratch_id")): (row.get("tenant_id") or DEFAULT_TENANT_ID)
+        for row in rows
+        if row.get("scratch_id")
+    }
+    for pad_id in default_ids:
+        assert tenant_map[pad_id] == "tenant-alpha"
+    assert tenant_map[other_pad.scratch_id] == "tenant-other"

@@ -71,8 +71,7 @@ Return the full contents of an existing scratchpad.
 **Request**
 
 - `scratch_id: string` (required)
-- `indices: integer[]` (optional) — if provided, only cells at these indices are returned.
-- `cell_ids: string[]` (optional) — filters by explicit cell identifiers; combines with `indices` via union before applying tag filters.
+- `cell_ids: string[]` (optional) — filters by explicit cell identifiers before the tag filter.
 - `tags: string[]` (optional) — when provided, only cells (and metadata summaries) containing at least one requested tag are returned.
 - `include_metadata: boolean` (optional, default `true`) — controls whether scratchpad metadata is included in the response.
 - `namespaces: string[]` (optional) — when provided, the server MUST verify the scratchpad belongs to one of the listed namespaces, otherwise respond with `CONFLICT` without revealing existence.
@@ -91,7 +90,7 @@ Return the full contents of an existing scratchpad.
 
 **Behavioral constraints**
 
-- When `indices` or `cell_ids` are provided, the server MUST validate they refer to existing cells and select their union before applying `tags` filtering. Invalid references result in `INVALID_INDEX`/`INVALID_ID` without mutations.
+- When `cell_ids` are provided, the server MUST validate they refer to existing cells before applying `tags` filtering. Invalid references result in `INVALID_ID` without mutations.
 - When `tags` is supplied, only the subset of cells whose `tags` array intersects the provided set is returned. The response MUST still include scratchpad-level `tags` and the synthesized `cell_tags` array covering all cell tags (even those filtered out) so clients can understand the overall taxonomy.
 - When `include_metadata` is `false`, the `metadata` field is omitted from the response while other fields remain unchanged.
 
@@ -127,21 +126,22 @@ Append a new cell to the end of a scratchpad.
 
 **Behavioral constraints**
 
-- If `validate: true`, the server must perform validation appropriate to `language` using the validation stack described in `research.md`.
-- When `json_schema` is a scratchpad reference, the server resolves it to the shared schema prior to validation and fails the operation with `VALIDATION_ERROR` if the reference cannot be resolved.
-- On error (for example validation failure), the operation must not partially mutate the scratchpad; `ok` is `false` and `error` must be populated.
+- If `validate: true`, the server MUST perform validation appropriate to `language` using the validation stack described in `research.md`, but validation is advisory: diagnostics are attached to `ValidationResult` objects and MAY be included in the response, and MUST NOT cause the append operation to fail solely because issues were detected.
+- When `json_schema` is a scratchpad reference, the server resolves it to the shared schema prior to validation. If the reference cannot be resolved, the cell is still appended unchanged and the `ValidationResult` MUST contain a warning describing the missing schema reference.
+- Storage or configuration errors (for example invalid `scratch_id`, capacity violations) still fail the operation and MUST NOT partially mutate the scratchpad; `ok` is `false` and `error` is populated in those cases.
 
 ## 5. Tool: `scratch_replace_cell`
 
 **Purpose**
 
-Replace an existing cell at a given `index` with new content.
+Replace an existing cell with new content and optionally move it to a new position.
 
 **Request**
 
 - `scratch_id: string` (required)
-- `index: integer` (required; zero-based, must refer to an existing cell).
+- `cell_id: string` (required; UUID of the cell to replace).
 - `cell: object` (required; same structure as in `scratch_append_cell`).
+- `new_index: integer` (optional; zero-based reorder target applied after replacement).
 
 **Response (success)**
 
@@ -156,9 +156,10 @@ Replace an existing cell at a given `index` with new content.
 
 **Behavioral constraints**
 
-- The operation must be atomic: either the new cell is fully written at `index` or the scratchpad is unchanged.
-- Validation semantics for `validate: true` are the same as for `scratch_append_cell`.
-- Shared schema references MUST be resolved identically to append operations; unresolved references result in `VALIDATION_ERROR` and no mutation.
+- The operation must be atomic with respect to storage: either the new cell is fully written at `index` or the scratchpad is unchanged when a storage/configuration error occurs.
+- Validation semantics for `validate: true` are the same as for `scratch_append_cell`: diagnostics are advisory and MUST NOT on their own prevent the replacement from being stored.
+- Shared schema references MUST be resolved identically to append operations; unresolved references result in warnings attached to the validation results, not a failed replace.
+- When `new_index` is supplied, the server MUST move the targeted cell to that zero-based position after the replacement and shift neighbouring cells to keep indices contiguous.
 
 ## 6. Tool: `scratch_delete`
 
@@ -233,7 +234,6 @@ Return a lightweight listing of cells for a scratchpad without full content payl
 **Request**
 
 - `scratch_id: string` (required)
-- `indices: integer[]` (optional) — subset filter
 - `cell_ids: string[]` (optional) — filter to specific cell UUIDs
 - `tags: string[]` (optional) — return only cells whose tag set intersects the provided list
 
@@ -252,7 +252,7 @@ Return a lightweight listing of cells for a scratchpad without full content payl
 **Behavioral constraints**
 
 - Designed for navigation; returns only lightweight data, not full cell contents.
-- Honors tenant scoping and rejects invalid indices with `INVALID_INDEX`.
+- Honors tenant scoping and rejects invalid `cell_id` references with `INVALID_ID`.
 - When both `cell_ids` and `tags` are provided the result includes only cells present in the intersection.
 
 ## 9. Tool: `scratch_validate`
@@ -264,9 +264,8 @@ Validate one or more cells within a scratchpad and return structured results.
 **Request**
 
 - `scratch_id: string` (required)
-- `indices: integer[]` (optional)
-  - If omitted or empty, all cells are validated.
-  - If provided, only the specified indices are validated.
+- `cell_ids: string[]` (optional)
+  - Preferred mechanism for targeting cells once `cell_id` is known; allows validation to be driven entirely by ids instead of indices.
 
 **Response (success)**
 
@@ -287,39 +286,9 @@ Validate one or more cells within a scratchpad and return structured results.
   - No partial results are returned.
 - For cells with unsupported validation (for example `txt`):
   - Results must mark them as valid and indicate that no validation was performed.
-- For JSON/YAML cells that reference shared schemas, results MUST indicate which shared schema id was applied and propagate schema failures with `VALIDATION_ERROR` diagnostics.
-
-## 10. Tool: `scratch_list_cells`
-
-**Purpose**
-
-Return a lightweight listing of cells for a scratchpad.
-
-**Request**
-
-- `scratch_id: string`
-- `indices?: integer[]` (subset of indices to include)
-- `cell_ids?: string[]` (subset of cell ids to include)
-- `tags?: string[]` (include only cells whose metadata `tags` contain any entry)
-
-**Response (success)**
-
-- `ok: true`
-- `scratch_id: string`
-- `cells: object[]`
-  - Each element contains `cell_id`, `index`, `language`, and (when present) `metadata` mirroring the cell metadata.
-
-**Response (failure)**
-
-- `ok: false`
-- `error: ErrorResult`
-  - Typical `code`: `NOT_FOUND`, `INVALID_INDEX`, `VALIDATION_ERROR`.
-
-**Behavioral constraints**
-
-- When both `indices` and `cell_ids` are supplied, the result MUST include the intersection only.
-- Tag filters match when any requested tag exists on the cell metadata `tags` array.
-- The listing MUST omit raw `content` to keep responses lightweight while preserving ordering by cell index.
+- For JSON/YAML cells that reference shared schemas:
+  - Results MUST indicate which shared schema id was applied when resolved.
+  - When the reference cannot be resolved, results MUST include a warning (not a top-level error) describing the missing schema reference; the cell content itself is never discarded as a consequence of validation.
 
 ## 11. Tool: `scratch_list_schemas`
 

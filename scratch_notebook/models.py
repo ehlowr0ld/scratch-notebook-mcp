@@ -356,6 +356,7 @@ class ValidationResult:
 
     cell_index: int
     language: str
+    cell_id: str | None = None
     valid: bool = True
     errors: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
@@ -384,6 +385,8 @@ class ValidationResult:
             "errors": list(self.errors),
             "warnings": list(self.warnings),
         }
+        if self.cell_id is not None:
+            payload["cell_id"] = self.cell_id
         if self.details:
             payload["details"] = dict(self.details)
         return payload

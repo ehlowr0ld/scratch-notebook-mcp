@@ -331,3 +331,48 @@ Path conventions for this project (per `plan.md`):
 - [X] T096 [US4] Relocate agent-facing instructions (including canonical metadata tone) into FastMCP tool prompts so clients receive self-contained guidance.
 - [X] T097 [US4] Update FastMCP tool prompts (notably `scratch_create`) to instruct assistants to reuse project-specific namespace prefixes discovered via `scratch_namespace_list`, ensuring consistent naming when multiple projects share the default tenant.
 - [X] T098 [US4] Add contract or unit coverage that exercises the updated prompts/documentation to confirm the namespace reuse guidance remains present and accurate.
+
+---
+
+## Phase 8: Validation UX & Id-First Addressing (Post-Stabilisation)
+
+**Goal**: Evolve validation and addressing semantics so scratchpads behave like advisory workspaces (not compilers) and entities are always addressed by stable ids instead of positional indices.
+
+- [X] T099 [P] Update validation semantics in `specs/001-scratch-notebook-mcp/spec.md`, `data-model.md`, `contracts/mcp-tools.md`, `quickstart.md`, `research.md`, `README.md`, `DEVELOPMENT.md`, and `AGENTS.md` so that:
+  - All validation diagnostics (JSON/YAML/code/markdown) are advisory and never block create/append/replace operations.
+  - Missing JSON/YAML schema references (for example `scratchpad://schemas/<name>` that are not present) produce warnings and store the cell unchanged.
+  - The `ValidationResult` model clearly represents warnings vs informational messages and is framed as guidance, not hard errors.
+- [X] T100 [P] Shift `scratch_append_cell` / `scratch_replace_cell` / `scratch_validate` implementations in `scratch_notebook/server.py` and `scratch_notebook/validation.py` to the new advisory model:
+  - `VALIDATION_ERROR` has now a warning character instead of a hard error, it no longer aborts operation - it only gets logged as advisory to correct the errors presented as clear comprehensive detail context in the warning message.
+  - Automatic validation on `validate=true` must always persist the cell and return structured diagnostics without raising `VALIDATION_ERROR`.
+  - `scratch_validate` must accept explicit cell id lists and re-validate those cells even when their `validate` flag is false.
+  - Response formats and error codes must remain consistent with the updated contracts while eliminating index-only addressing wherever ids exist.
+- [X] T101 [P] Refine id-first addressing across tools and docs:
+  - Prefer `cell_id` and `scratch_id` filters over raw indices in MCP contracts and prompts.
+  - Where positional indices are currently the only option, add id-based alternatives and mark index usage as legacy in `spec.md` and `contracts/mcp-tools.md`.
+  - Update tests in `tests/unit/` and `tests/integration/` to exercise id-based flows as the primary path.
+- [X] T102 [P] Make tool prompts in `scratch_notebook/server.py` fully explicit about validation and addressing semantics:
+  - Describe exactly when automatic validation runs, what happens on validation diagnostics, and how to interpret `results` arrays.
+  - Document that manual `scratch_validate` calls treat validation as advisory and can be targeted by cell ids.
+  - Ensure prompts remain self-contained so agents understand parameters, behaviours, and response shapes without reading this repository.
+- [X] T103 [P] Remove index-based addressing from edit operations and keep indices only as ordering metadata:
+  - Update `spec.md`, `data-model.md`, `contracts/mcp-tools.md`, `scratch-notepad-tool.md`, `research.md`, `quickstart.md`, `README.md`, `DEVELOPMENT.md`, and `AGENTS.md` so editing tools (`scratch_replace_cell`, `scratch_validate`, `scratch_read`, `scratch_list_cells`) describe `cell_id` as the sole identifier for mutations; indices are documented purely as order indicators.
+  - Extend `scratch_replace_cell` contract with an optional `new_index` parameter (or equivalent) that lets clients reorder cells without relying on positional addressing.
+  - Add a new server-level task covering prompt updates so FastMCP instructions fully describe the id-only editing and reorder semantics.
+- [X] T104 [P] Implement the id-only editing model:
+  - Update server/storage code so `_scratch_replace_cell_impl`, `_scratch_validate_impl`, `_scratch_read_impl`, `_scratch_list_cells_impl`, and related helpers accept only `cell_id` for targeting cells (indices removed except for the reorder parameter).
+  - Teach storage to handle reorder requests by shifting neighbouring cells when `new_index` (or the chosen reorder parameter) is provided, ensuring indexes remain contiguous.
+  - Adjust prompt text, tests (unit, integration, contract), and schemas to align with the new parameter set; remove index-based addressing tests and add reorder coverage.
+  - Run full pytest and document the change in `implementation.md`.
+
+---
+
+## Phase 9: Scalability & Precision Optimization (New)
+
+**Goal**: Optimize for scale (>10k pads) and high namespace cardinality using native LanceDB scalar indexing and search pre-filtering (see Phase 9 in `plan.md`).
+
+- [X] T105 [P] **Implement Scalar Indexing**: Update `scratch_notebook/storage_lancedb.py` to ensure a scalar index exists on the `tenant_id` column during `Storage` initialization. This optimizes lookups for tenant-scoped operations.
+- [X] T106 [P] **Optimize Default Tenant Migration**: Refactor `migrate_default_tenant` in `scratch_notebook/storage_lancedb.py` to use `table.search().where("tenant_id = 'default'")` (or equivalent scan builder) instead of loading the full table into memory. This ensures O(log N) or O(filtered) performance instead of O(N).
+- [X] T107 [P] **Implement Native Search Pre-filtering**: Update `search_embeddings` in `scratch_notebook/storage_lancedb.py` to push namespace filters down to LanceDB using `where(..., prefilter=True)`. Construct SQL-style predicates (e.g., `namespace IN ('A', 'B')`) instead of filtering in Python after the fact.
+- [X] T108 [P] **Verify Migration Scalability**: Create a test case in `tests/unit/test_lancedb_storage.py` (or a new performance-focused test) that populates a temporary DB with a mix of tenants and verifies that `migrate_default_tenant` correctly targets only the default tenant rows without errors. (Note: Full O(N) memory verification is hard in unit tests, but logical correctness of the new query path must be verified).
+- [X] T109 [P] **Verify Pre-filtering Accuracy**: Create a test case in `tests/unit/test_semantic_search.py` where the top global matches for a query are in Namespace A, but the search requests Namespace B. Assert that the system returns valid results from Namespace B (if they exist) up to the requested limit, proving that the filter was applied *before* the limit.

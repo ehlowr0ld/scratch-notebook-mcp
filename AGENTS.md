@@ -80,6 +80,7 @@ Supplementary references:
 5. Update tool prompts when behaviour changes; keep namespace guidance consistent for shared default tenant usage.
 6. When modifying behaviour, update spec documents as required and append new tasks via the constitution process.
 7. Maintain real-time checklist synchronization: mark `tasks.md` items complete immediately after verifying requirements.
+8. When the user requests a release or provides a version tag, add/refresh the matching entry in `CHANGELOG.md`, update the README release note to that version, and record the action in `specs/001-scratch-notebook-mcp/implementation.md` before handing the work back.
 
 ## 8. Testing Strategy
 - Default command: `timeout 60 pytest`.
@@ -116,3 +117,26 @@ Adhering to this guide ensures continuity across autonomous developer sessions a
 - Every substantive change must finish with an updated implementation log entry, synced checklist items, and a full `timeout 300 pytest` run (or the narrowest failing suite followed by the full run).
 - When you update documentation, prompts, or behaviour, synchronize `README.md`, `DEVELOPMENT.md`, `AGENTS.md`, and the specification bundle in the same change set so all three audiences (operators, contributors, agents) stay aligned.
 - If you introduce a new phase of work, create fresh tasks/checklists before touching code so future agents inherit an accurate backlog.
+
+## 12. MCP Tool Quick Reference
+
+| Tool | When to use it | Key hints |
+| --- | --- | --- |
+| `scratch_create` | Start/reset pads with canonical metadata (title, description, summary, namespace, tags). Reuse existing namespace prefixes discovered via `scratch_namespace_list`. |
+| `scratch_read` | Pull full pad content. Use `cell_ids`, `tags`, `namespaces`, and `include_metadata=false` when you only need specific cells. Indices are returned for ordering but never accepted as selectors. |
+| `scratch_list` | Browse pads quickly. Returns `scratch_id`, canonical metadata, namespace, and `cell_count`. Combine with namespace/tag filters. |
+| `scratch_list_cells` | Get a lightweight view of cells (id, index, language, tags) without retrieving the entire pad. Filter by `cell_ids` and tags. |
+| `scratch_append_cell` / `scratch_replace_cell` | Add or modify cells. Always supply `cell_id` when replacing. Optional `new_index` lets you move the targeted cell to a new position while replacing it. Set `validate=true` to trigger advisory JSON/YAML/code/markdown checks before the change persists. |
+| `scratch_delete` | Remove pads by id. |
+| `scratch_list_tags` | Show tag vocabulary (pad + cell tags) optionally filtered by namespace—useful before building tag filters. |
+| `scratch_validate` | Re-run validation on any subset of cells (supply `cell_ids`, or omit to validate all). Handy after editing metadata or referencing new schemas. |
+| `scratch_search` | Semantic search across pads, filtering by namespaces/tags when you need scoped results. |
+| `scratch_list_schemas` / `scratch_get_schema` / `scratch_upsert_schema` | Manage schema registry entries so append/replace/validate can reference `scratchpad://schemas/<name>` ids. |
+| `scratch_namespace_list` / `scratch_namespace_create` / `scratch_namespace_rename` / `scratch_namespace_delete` | Keep namespace prefixes organised when multiple projects share the tenant. Avoid creating new namespaces unless necessary, and prefer renaming over deleting when existing pads should migrate. |
+
+Indices in responses are for presentation only. Always target cells via `cell_id`, and pass the optional `new_index` argument to `scratch_replace_cell` when you need to reorder a cell while editing it.
+
+Validation reminders:
+- Automatic validation triggers only when you pass `validate=true` on append/replace. Otherwise, call `scratch_validate` explicitly. Validation is advisory: diagnostics never cause a cell to be dropped or a write to be rejected.
+- Validation covers JSON/YAML (with schema support), Markdown, and code via `syntax-checker`. Unsupported languages return “not validated” but never crash the flow. Missing shared schemas (for example `scratchpad://schemas/<name>`) are reported as warnings only.
+- Timeouts follow `validation_request_timeout`; handle `VALIDATION_TIMEOUT` gracefully and retry with smaller batches if needed. Always use `cell_ids` when selecting specific cells.
