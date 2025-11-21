@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from scratch_notebook import models
+from scratch_notebook import validation as validation_module
 from scratch_notebook.validation import JSON_SCHEMA_SKIPPED_MESSAGE, validate_cell
 
 
@@ -117,3 +118,28 @@ def test_json_schema_reference_reports_missing_definition() -> None:
     assert result.valid is True
     assert any("schema reference" in warning["message"] for warning in result.warnings)
     assert result.details.get("schema_ref") == "unknown"
+
+
+def test_json_schema_references_warn_when_registry_support_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    if validation_module.jsonschema is None:
+        pytest.skip("jsonschema not available in runtime")
+
+    cell = _make_cell(
+        "json",
+        "{\"value\": 5}",
+        json_schema={"$ref": "scratchpad://schemas/shared"},
+    )
+    schemas = {"shared": {"type": "object", "properties": {"value": {"type": "integer"}}}}
+
+    monkeypatch.setattr(validation_module, "Registry", None, raising=False)
+    monkeypatch.setattr(validation_module, "Resource", None, raising=False)
+    monkeypatch.setattr(validation_module, "_referencing_missing_logged", False, raising=False)
+
+    result = validate_cell(cell, schemas=schemas)
+
+    warning_messages = [warning["message"] for warning in result.warnings]
+    assert any(
+        validation_module.JSON_SCHEMA_REFERENCE_SKIPPED_MESSAGE in message
+        for message in warning_messages
+    )
+    assert result.errors == []

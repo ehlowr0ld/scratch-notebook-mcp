@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -76,3 +77,46 @@ def test_markdown_validation_warns_when_analyzer_missing(monkeypatch: pytest.Mon
 
     assert result.valid is True
     assert any(MARKDOWN_SKIPPED_MESSAGE in warning["message"] for warning in result.warnings)
+
+
+def test_markdown_validation_reports_analyzer_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def failing_analyzer(content: str) -> SimpleNamespace:  # pragma: no cover - called indirectly
+        raise RuntimeError("analysis exploded")
+
+    monkeypatch.setattr(
+        validation_module,
+        "markdown_analysis",
+        SimpleNamespace(analyze=failing_analyzer),
+        raising=False,
+    )
+
+    cell = _cell("md", "## Title\n\nBody")
+    result = validate_cell(cell)
+
+    assert result.valid is True
+    assert any("Markdown analysis failed" in warning["message"] for warning in result.warnings)
+    assert result.details.get("analysis_error") == "analysis exploded"
+
+
+def test_markdown_validation_preserves_warnings_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    analysis = SimpleNamespace(
+        warnings=["Heading levels should increment by one"],
+        errors=["Table requires a header row"],
+    )
+
+    def successful_analyzer(content: str) -> SimpleNamespace:
+        return analysis
+
+    monkeypatch.setattr(
+        validation_module,
+        "markdown_analysis",
+        SimpleNamespace(analyze=successful_analyzer),
+        raising=False,
+    )
+
+    cell = _cell("md", "# Intro\n\n|a|")
+    result = validate_cell(cell)
+
+    assert result.valid is False
+    assert any("Heading levels should increment by one" in warning["message"] for warning in result.warnings)
+    assert any("Table requires a header row" in error["message"] for error in result.errors)

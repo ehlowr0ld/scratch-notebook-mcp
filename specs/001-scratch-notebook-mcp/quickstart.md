@@ -116,12 +116,20 @@ Call the `scratch_create` tool (via MCP client or HTTP wrapper):
       "namespace": "experiments",
       "tags": ["ml", "baseline"],
       "note": "Temporary configuration draft"
-    }
+    },
+    "cells": [
+      {
+        "language": "json",
+        "content": "{ \"seeded\": true }",
+        "metadata": { "tags": ["boot"] },
+        "validate": true
+      }
+    ]
   }
 }
 ```
 
-The response includes an empty `cells` array plus a normalized metadata block. Canonical fields (`title`, `description`, optional `summary`) are also surfaced at the top level of the returned scratchpad to support lean listings.
+The response includes a normalized metadata block plus a lightweight `cells` array containing ids, indices, language, validation flags, and metadata/tags. Cell `content` is intentionally omitted from write responses to keep tokens low; issue `scratch_read` whenever you need the full notebook payload immediately after creation. Canonical fields (`title`, `description`, optional `summary`) are also surfaced at the top level of the returned scratchpad to support lean listings.
 
 > **Canonical metadata tone**
 >
@@ -164,6 +172,8 @@ Append a markdown cell:
   }
 }
 ```
+
+Append/replace responses mirror `scratch_create`: they confirm the updated structure (ids, indices, tags, metadata, validation output) but do not echo the raw cell content.
 
 Need to move a cell? Call `scratch_replace_cell` with the target `cell_id` plus the new content and (optionally) `new_index`. The server updates the cell and shifts neighbours so indices stay contiguous, while `cell_id` remains the only identifier you ever pass to mutations.
 

@@ -29,7 +29,7 @@ tests/                         # Unit, integration, and contract suites
    source .venv/bin/activate
    pip install -e .
    ```
-2. Install test extras as new dependencies are introduced (for example `pytest`, `pytest-asyncio`). `uv pip install -r requirements-dev.txt` works as an alternative when using uv.
+2. Install test extras as new dependencies are introduced (for example `pytest`, `pytest-asyncio`, `coverage`). Running `pip install -e .[dev]` (or `uv pip install -e .[dev]`) ensures the dev extra installs the full toolchain in one step.
 3. Export `PYTHONPATH="/home/rafael/Workspace/Repos/rafael/scratch-notebook"` before invoking project modules or pytest so imports resolve in editors and scripts.
 4. Maintain the dependency pins declared in `pyproject.toml` (notably `fastmcp`, `jsonschema`, `syntax-checker`, `markdown-analysis`, `lancedb`, and `sentence-transformers`).
 
@@ -49,6 +49,17 @@ Usage examples:
 - `timeout 120 pytest tests/contract`
 
 Large refactors should run the targeted suite first and then the full suite to ensure no regressions slip past.
+
+### Coverage Workflow
+
+Every release-quality change should capture coverage results so we can spot regressions in `scratch_notebook/validation.py` and other complex modules:
+
+```bash
+python -m coverage run -m pytest
+python -m coverage report -m
+```
+
+Because `coverage` ships in the `dev` extra, `pip install -e .[dev]` or `uv pip install -e .[dev]` guarantees the command is available without manual installs. Record notable gaps (for example uncovered advisory-validation branches) in `specs/001-scratch-notebook-mcp/implementation.md` and schedule new tasks when thresholds slip.
 
 ## SpecKit Workflow
 
@@ -85,14 +96,14 @@ All tools are declared in `scratch_notebook/server.py` near the bottom of the fi
 
 | Tool | Handler | Purpose / Notes |
 | --- | --- | --- |
-| `scratch_create` | `_scratch_create_impl` | Create/reset pads, accepts optional `scratch_id` and metadata (title/description/summary/namespace/tags). |
+| `scratch_create` | `_scratch_create_impl` | Create/reset pads, accepts optional `scratch_id`, metadata (title/description/summary/namespace/tags), and a `cells` array for one-shot creation. Responses return structural summaries (ids/indices/metadata/tags/validation) without raw content—call `scratch_read` for the full payload. |
 | `scratch_read` | `_scratch_read_impl` | Read pads with filters for `cell_ids`, tags, namespaces, and optional metadata omission; indices are returned for ordering but never accepted as identifiers. |
 | `scratch_list_cells` | `_scratch_list_cells_impl` | Lightweight cell listings (id, index, language, tags, metadata). Filters accept `cell_ids` + tags only. |
 | `scratch_delete` | `_scratch_delete_impl` | Delete pads and clean up embeddings. |
 | `scratch_list` | `_scratch_list_impl` | List pads with `scratch_id`, canonical metadata, namespace, and `cell_count`. Supports namespace/tag filters and limits. |
 | `scratch_list_tags` | `_scratch_list_tags_impl` | Aggregate pad-level and cell-level tags, optionally filtered by namespace. |
-| `scratch_append_cell` | `_scratch_append_cell_impl` | Append cells, honoring `validate` flag, schema registry lookups, and eviction handling. |
-| `scratch_replace_cell` | `_scratch_replace_cell_impl` | Replace cells by `cell_id`, optionally moving them via `new_index`; copies metadata when not supplied and supports validation. |
+| `scratch_append_cell` | `_scratch_append_cell_impl` | Append cells, honoring `validate` flag, schema registry lookups, and eviction handling. Responses mirror `scratch_create` and omit raw content. |
+| `scratch_replace_cell` | `_scratch_replace_cell_impl` | Replace cells by `cell_id`, optionally moving them via `new_index`; copies metadata when not supplied and supports validation. Responses also omit content—use `scratch_read` to inspect the updated cell body. |
 | `scratch_validate` | `_scratch_validate_impl` | Run validation over all cells or a supplied `cell_ids` subset; respects `validation_request_timeout`. |
 | `scratch_search` | `_scratch_search_impl` | Semantic search via `SearchService`; accepts namespace/tag filters and limit. |
 | `scratch_list_schemas` | `_scratch_list_schemas_impl` | List stored schemas per pad. |
@@ -109,6 +120,12 @@ Refer to the surrounding parameter and output schema definitions in `server.py` 
 
 1. Confirm `specs/001-scratch-notebook-mcp/tasks.md` has relevant tasks marked completed.
 2. Run the full `pytest` suite.
-3. Ensure README configuration snippets reference the latest CLI/environment flags.
-4. Verify FastMCP tool descriptions accurately describe parameters and expected behaviour.
-5. Whenever the user asks for a release/tag, add the new entry to `CHANGELOG.md`, refresh the README release note to the provided version, and update dependency pins if the release requires it.
+3. Capture coverage results with:
+   ```bash
+   python -m coverage run -m pytest
+   python -m coverage report -m
+   ```
+   Record notable coverage gaps (especially around advisory validation semantics) in `specs/001-scratch-notebook-mcp/implementation.md` and open tasks when thresholds regress.
+4. Ensure README configuration snippets reference the latest CLI/environment flags.
+5. Verify FastMCP tool descriptions accurately describe parameters and expected behaviour.
+6. Whenever the user asks for a release/tag, add the new entry to `CHANGELOG.md`, refresh the README release note to the provided version, and update dependency pins if the release requires it.

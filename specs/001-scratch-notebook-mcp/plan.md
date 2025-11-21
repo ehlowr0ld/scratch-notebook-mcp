@@ -195,3 +195,47 @@ Use a single Python package `scratch_notebook` within this repository to impleme
 
 *   **Migration Test**: Verify that `migrate_default_tenant` correctly identifies and updates only `default` tenant rows without touching others, even in a mixed-tenant database.
 *   **Pre-filtering Test**: Seed a database with highly similar documents in Namespace A and Namespace B. Query with a filter for Namespace B. Verify that the system returns K results from Namespace B, even if Namespace A has "better" raw vector matches.
+
+## Phase 10: One-Shot Creation & Context Efficiency
+
+**Goal**: Streamline agent workflows by allowing a scratchpad to be fully initialized in one call, while optimizing response payloads to prevent context window exhaustion.
+
+### Key Improvements
+
+1.  **Atomic One-Shot Creation**:
+    *   `scratch_create` accepts an optional `cells` array.
+    *   Storage layer persists the pad and all initial cells in one transaction.
+    *   Failure in any cell definition aborts the entire creation (no partial pads).
+
+2.  **Context-Efficient Responses**:
+    *   Write operations (`create`, `append`, `replace`) return **structural** confirmation (IDs, indices, validation status) but **omit** full cell content.
+    *   Agents receive immediate confirmation of success and valid addressing info without redundant token usage.
+    *   Full content is retrieved only via explicit `scratch_read`.
+
+### Implementation Steps
+
+1.  Update `scratch_create` schema to accept `cells`.
+2.  Implement transactional creation in `Storage`.
+3.  Refactor response serialization to strip `content` fields for all write operations.
+4.  Verify via integration tests that content is persisted but not echoed.
+
+## Phase 11: Validation Coverage & Tooling
+
+**Goal**: Close the remaining coverage gaps in `scratch_notebook/validation.py` and institutionalize coverage tooling so every release run captures precise diagnostics.
+
+### Key Improvements
+
+1.  **Validation Edge-Case Tests**
+    *   Expand unit tests to exercise `ValidationResult` mapping for markdown analyzer failures, schema reference fallbacks, and mixed warning/info diagnostics.
+    *   Ensure unsupported languages and missing schemas continue to persist cells while producing advisory diagnostics.
+2.  **Integration Verification of Advisory Semantics**
+    *   Add integration coverage that triggers unresolved schema references and unsupported languages through MCP flows, asserting responses surface warnings and keep writes intact.
+    *   Capture regression fixtures so future changes cannot regress advisory behavior.
+3.  **Coverage Workflow & Tooling**
+    *   Pin the `coverage` package inside the `dev` optional dependency set and document the standard `coverage run -m pytest` / `coverage report -m` workflow in `DEVELOPMENT.md`, `README.md`, and the release checklist to avoid ad hoc installs.
+    *   Update documentation to describe how to interpret coverage gaps, insist on recording them in `implementation.md`, and mandate new tasks whenever advisory-validation branches lose coverage.
+
+### Testing Strategy
+
+*   Leverage existing unit modules (`tests/unit/test_validation_json_yaml.py`, `tests/unit/test_validation_code_markdown.py`, `tests/unit/test_validation_fallbacks.py`) plus `tests/integration/test_mcp_scratch_validate.py` for end-to-end confirmation.
+*   Record target coverage thresholds in the implementation log once the work lands so future runs can flag regressions early.

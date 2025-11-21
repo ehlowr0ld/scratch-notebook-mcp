@@ -376,3 +376,30 @@ Path conventions for this project (per `plan.md`):
 - [X] T107 [P] **Implement Native Search Pre-filtering**: Update `search_embeddings` in `scratch_notebook/storage_lancedb.py` to push namespace filters down to LanceDB using `where(..., prefilter=True)`. Construct SQL-style predicates (e.g., `namespace IN ('A', 'B')`) instead of filtering in Python after the fact.
 - [X] T108 [P] **Verify Migration Scalability**: Create a test case in `tests/unit/test_lancedb_storage.py` (or a new performance-focused test) that populates a temporary DB with a mix of tenants and verifies that `migrate_default_tenant` correctly targets only the default tenant rows without errors. (Note: Full O(N) memory verification is hard in unit tests, but logical correctness of the new query path must be verified).
 - [X] T109 [P] **Verify Pre-filtering Accuracy**: Create a test case in `tests/unit/test_semantic_search.py` where the top global matches for a query are in Namespace A, but the search requests Namespace B. Assert that the system returns valid results from Namespace B (if they exist) up to the requested limit, proving that the filter was applied *before* the limit.
+
+---
+
+## Phase 10: One-Shot Creation & Richer Responses (New)
+
+**Goal**: Allow `scratch_create` to accept an optional list of cells for atomic creation and ensure its response includes the full scratchpad state (including cells) to match `scratch_read` semantics.
+
+- [X] T110 [P] **Update Scratch Create Schema**: Update `scratch_notebook/server.py` and `scratch_notebook/models.py` (and contract tests) to accept an optional `cells` list in `scratch_create`, validating that each cell conforms to the `scratch_append_cell` input structure.
+- [X] T111 [P] **Implement One-Shot Creation Logic**: Update `scratch_notebook/storage.py` (and LanceDB implementation) to handle atomic creation of a scratchpad with multiple initial cells. Ensure all cells are assigned stable IDs and indices within the same transaction as the pad creation.
+- [X] T112 [P] **Optimize Create Response**: Refactor `scratch_create` implementation to return the `Scratchpad` metadata and a *lightweight* `cells` array (including ID, index, type, validation status) but **EXCLUDING** cell content.
+- [X] T113 [P] **Verify One-Shot Creation**: Add integration tests in `tests/integration/test_mcp_scratch_lifecycle.py` covering `scratch_create` with:
+  - Empty cells list (default behavior).
+  - Single cell.
+  - Multiple cells of mixed types.
+  - Invalid cells (verifying atomic failure/rollback).
+  - Verify the response contains correct IDs and indices but NO content.
+- [X] T114 [P] **Audit and Fix Write Responses**: Update `scratch_append_cell` and `scratch_replace_cell` implementations in `scratch_notebook/server.py` to use the same lightweight response format (excluding content) to conserve context window. Update corresponding contract tests.
+
+---
+
+## Phase 11: Validation Coverage & Tooling
+
+**Goal**: Increase coverage for `scratch_notebook/validation.py` and guarantee the tooling stack always includes coverage reporting for regression gates.
+
+- [X] T115 [P] **Target Validation Edge Cases**: Extend `tests/unit/test_validation_json_yaml.py`, `tests/unit/test_validation_code_markdown.py`, and `tests/unit/test_validation_fallbacks.py` with scenarios that currently miss coverage (markdown analyzer failures, schema reference fallbacks, mixed warning/info diagnostics) and assert `ValidationResult` payloads match the advisory contract.
+- [X] T116 [P] **Propagate Advisory Diagnostics**: Add focused integration coverage in `tests/integration/test_mcp_scratch_validate.py` (or a new regression file) that exercises unresolved schema references and unsupported languages, ensuring server responses include warning-level validation entries and never block writes.
+- [X] T117 [P] **Document Coverage Workflow**: Update `DEVELOPMENT.md`, `README.md`, and related developer docs to mandate `coverage run -m pytest` before releases and describe how to interpret coverage gaps; add any missing instructions in `specs/001-scratch-notebook-mcp/plan.md` and `implementation.md` once work begins.
