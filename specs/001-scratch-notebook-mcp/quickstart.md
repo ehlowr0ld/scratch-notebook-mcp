@@ -244,6 +244,8 @@ Read only cells tagged `model` (metadata omitted):
 }
 ```
 
+Indices in the response show where each cell sits within the notebook, but you always target cells by `cell_id`. Combine `cell_ids` with the optional `tags` filter when you want an intersection of specific cells and tag categories.
+
 List scratchpads in the `experiments` namespace with `ml` tags:
 
 ```json

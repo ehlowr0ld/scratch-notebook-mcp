@@ -56,36 +56,6 @@ async def test_scratch_validate_returns_results_for_json_cell(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scratch_validate_with_indices_limits_scope(app) -> None:
-    create_resp = await _scratch_create_impl(metadata={})
-    scratch_id = create_resp["scratchpad"]["scratch_id"]
-
-    first_append = await _scratch_append_cell_impl(
-        scratch_id,
-        {
-            "language": "json",
-            "content": json.dumps({"one": 1}),
-        },
-    )
-    second_append = await _scratch_append_cell_impl(
-        scratch_id,
-        {
-            "language": "json",
-            "content": json.dumps({"two": 2}),
-        },
-    )
-    second_cell_id = second_append["scratchpad"]["cells"][1]["cell_id"]
-
-    validate_resp = await _scratch_validate_impl(scratch_id, indices=[1])
-
-    assert validate_resp["ok"] is True
-    results = validate_resp["results"]
-    assert len(results) == 1
-    assert results[0]["cell_index"] == 1
-    assert results[0]["cell_id"] == second_cell_id
-
-
-@pytest.mark.asyncio
 async def test_scratch_validate_with_cell_ids_limits_scope(app) -> None:
     create_resp = await _scratch_create_impl(metadata={})
     scratch_id = create_resp["scratchpad"]["scratch_id"]
@@ -114,6 +84,25 @@ async def test_scratch_validate_with_cell_ids_limits_scope(app) -> None:
     assert len(results) == 1
     assert results[0]["cell_id"] == target_cell_id
     assert results[0]["cell_id"] != other_cell_id
+
+
+@pytest.mark.asyncio
+async def test_scratch_validate_with_invalid_cell_id_returns_error(app) -> None:
+    create_resp = await _scratch_create_impl(metadata={})
+    scratch_id = create_resp["scratchpad"]["scratch_id"]
+
+    await _scratch_append_cell_impl(
+        scratch_id,
+        {
+            "language": "json",
+            "content": json.dumps({"value": 1}),
+        },
+    )
+
+    validate_resp = await _scratch_validate_impl(scratch_id, cell_ids=["missing"])
+
+    assert validate_resp["ok"] is False
+    assert validate_resp["error"]["code"] == "NOT_FOUND"
 
 
 @pytest.mark.asyncio

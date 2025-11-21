@@ -67,3 +67,14 @@
   - FastMCP tool prompts (`scratch_list_cells`, `scratch_append_cell`, `scratch_replace_cell`, `scratch_validate`, `scratch_read`) now spell out validation semantics, warning behavior, and id usage so agents have self-contained guidance.
 - Marked T100–T102 as complete in `tasks.md`.
 - Test matrix: ran targeted integration suites plus full `pytest` (184 passed).
+
+## 2025-11-21T10:15:00Z
+- Completed T103–T104: removed index-based selectors from read/list/validate flows, refreshed tool prompts, and documented that indices are presentation-only while `cell_id` is the sole identifier. Added `new_index` as the explicit reorder knob in specs, prompts, and server parameter schemas.
+- Updated `_scratch_replace_cell_impl` to require `cell_id`, enforce optional `new_index`, preserve metadata when omitted, and delegate to LanceDB storage, which now reindexes cells after reorder operations.
+- Reworked unit/integration tests to drop legacy index filters, add reorder coverage, and assert errors on invalid `cell_id` selectors.
+- Refreshed documentation (`spec.md`, `data-model.md`, `research.md`, `quickstart.md`, `README.md`, `DEVELOPMENT.md`, `AGENTS.md`) to describe the id-only editing model and the new `new_index` semantics; marked T103/T104 complete in `tasks.md`.
+
+## 2025-11-21T12:20:00Z
+- Ran `./.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks` to refresh context and honour skip instructions for ignore/checklist gates.
+- Re-read `tasks.md`, the spec/plan bundle, and inspected the server/storage/test deltas to verify the id-only editing model plus `new_index` reorder semantics were already fully applied; no additional implementation gaps were found.
+- Executed `timeout 300 pytest` (183 tests, 0 failures) to reconfirm the workspace is green; no code changes were required this session.

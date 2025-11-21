@@ -536,17 +536,6 @@ def _ensure_string_list(value: Any) -> list[str]:
     return normalize_tags(value)
 
 
-def _select_cells_by_indices(pad: Scratchpad, indices: Sequence[int]) -> list[ScratchCell]:
-    index_map = {cell.index: cell for cell in pad.cells}
-    selected: list[ScratchCell] = []
-    for index in indices:
-        try:
-            selected.append(index_map[index])
-        except KeyError as exc:
-            raise ScratchNotebookError(INVALID_INDEX, f"Cell index {index} out of range") from exc
-    return selected
-
-
 def _select_cells_by_ids(pad: Scratchpad, cell_ids: Sequence[str]) -> list[ScratchCell]:
     id_map = {cell.cell_id: cell for cell in pad.cells}
     selected: list[ScratchCell] = []
@@ -625,21 +614,13 @@ def _normalize_limit(limit: int | None) -> int | None:
 def _filter_cells(
     pad: Scratchpad,
     *,
-    indices: Sequence[int] | None = None,
     cell_ids: Sequence[str] | None = None,
     tags: Sequence[str] | None = None,
 ) -> list[ScratchCell]:
     selected: list[ScratchCell] = list(pad.cells)
 
-    if indices:
-        selected = _select_cells_by_indices(pad, indices)
-
     if cell_ids:
-        cells_by_id = _select_cells_by_ids(pad, cell_ids)
-        if indices:
-            allowed_ids = {cell.cell_id for cell in selected}
-            cells_by_id = [cell for cell in cells_by_id if cell.cell_id in allowed_ids]
-        selected = cells_by_id
+        selected = _select_cells_by_ids(pad, cell_ids)
 
     tag_filter = _normalize_tag_filter(tags)
     if tag_filter:
@@ -655,7 +636,6 @@ def _filter_cells(
 @_storage_error_guard
 async def _scratch_read_impl(
     scratch_id: str,
-    indices: Sequence[int] | None = None,
     cell_ids: Sequence[str] | None = None,
     tags: Sequence[str] | None = None,
     namespaces: Sequence[str] | None = None,
@@ -687,7 +667,7 @@ async def _scratch_read_impl(
             )
 
     try:
-        selected_cells = _filter_cells(pad, indices=indices, cell_ids=cell_ids, tags=tags)
+        selected_cells = _filter_cells(pad, cell_ids=cell_ids, tags=tags)
     except ScratchNotebookError as exc:
         return failure(exc)
 
@@ -707,7 +687,6 @@ async def _scratch_read_impl(
 @_shutdown_protected
 async def _scratch_list_cells_impl(
     scratch_id: str,
-    indices: Sequence[int] | None = None,
     cell_ids: Sequence[str] | None = None,
     tags: Sequence[str] | None = None,
     *,
@@ -717,7 +696,7 @@ async def _scratch_list_cells_impl(
     pad = storage.read_scratchpad(scratch_id)
 
     try:
-        cells = _filter_cells(pad, indices=indices, cell_ids=cell_ids, tags=tags)
+        cells = _filter_cells(pad, cell_ids=cell_ids, tags=tags)
     except ScratchNotebookError as exc:
         return failure(exc)
 
@@ -953,59 +932,50 @@ async def _scratch_append_cell_impl(
 @_shutdown_protected
 async def _scratch_replace_cell_impl(
     scratch_id: str,
-    index: int | None,
     cell: Mapping[str, Any],
     *,
-    cell_id: str | None = None,
+    cell_id: str,
+    new_index: int | None = None,
     context: Context | None = None,
 ) -> dict[str, Any]:
     storage = get_storage(context)
     search = get_search_service(context)
     validation_results: list[ValidationResult] = []
     snapshot_state = storage.capture_snapshot(scratch_id)
+    normalized_id = str(cell_id)
     try:
         current_pad = storage.read_scratchpad(scratch_id)
-        target_index: int | None = index
         existing_cell: ScratchCell | None = None
-        if cell_id is not None:
-            normalized_id = str(cell_id)
-            for candidate in current_pad.cells:
-                if candidate.cell_id == normalized_id:
-                    existing_cell = candidate
-                    target_index = candidate.index
-                    break
-            if existing_cell is None:
-                raise ScratchNotebookError(
-                    NOT_FOUND,
-                    f"Cell id {normalized_id} not found",
-                    details={"cell_id": normalized_id},
-                )
-            if index is not None and target_index != index:
-                raise ScratchNotebookError(
-                    VALIDATION_ERROR,
-                    "Cell id does not match the provided index",
-                    details={
-                        "cell_id": normalized_id,
-                        "index": index,
-                        "resolved_index": target_index,
-                    },
-                )
-        else:
-            if target_index is None:
-                raise ScratchNotebookError(
-                    VALIDATION_ERROR,
-                    "Either index or cell_id must be provided for replace operations",
-                )
-            if target_index < 0 or target_index >= len(current_pad.cells):
+        for candidate in current_pad.cells:
+            if candidate.cell_id == normalized_id:
+                existing_cell = candidate
+                break
+        if existing_cell is None:
+            raise ScratchNotebookError(
+                NOT_FOUND,
+                f"Cell id {normalized_id} not found",
+                details={"cell_id": normalized_id},
+            )
+        if new_index is not None:
+            if new_index < 0 or new_index >= len(current_pad.cells):
                 raise ScratchNotebookError(
                     INVALID_INDEX,
-                    f"Cell index {target_index} out of range",
+                    f"Cell index {new_index} out of range",
+                    details={"cell_id": normalized_id, "requested_index": new_index},
                 )
-            existing_cell = current_pad.cells[target_index]
-        assert target_index is not None
-        assert existing_cell is not None
         metadata_supplied = "metadata" in cell
-        new_cell = _build_cell(cell, index=target_index)
+        inbound_cell_id = cell.get("cell_id")
+        new_cell = _build_cell(cell, index=existing_cell.index)
+        if inbound_cell_id is not None and str(inbound_cell_id) != existing_cell.cell_id:
+            raise ScratchNotebookError(
+                VALIDATION_ERROR,
+                "Replacement payload must target the same cell_id",
+                details={
+                    "cell_id": normalized_id,
+                    "payload_cell_id": str(inbound_cell_id),
+                },
+            )
+        new_cell.cell_id = existing_cell.cell_id
         if not metadata_supplied:
             new_cell.metadata = dict(existing_cell.metadata)
         if new_cell.validate:
@@ -1015,7 +985,12 @@ async def _scratch_replace_cell_impl(
                 scratch_id=scratch_id,
                 schemas=registry,
             )
-        pad = storage.replace_cell(scratch_id, target_index, new_cell)
+        pad = storage.replace_cell(
+            scratch_id,
+            normalized_id,
+            new_cell,
+            new_index=new_index,
+        )
         try:
             await search.reindex_pad(pad)
         except ScratchNotebookError as exc:
@@ -1041,7 +1016,6 @@ async def _scratch_replace_cell_impl(
 @_shutdown_protected
 async def _scratch_validate_impl(
     scratch_id: str,
-    indices: Sequence[int] | None = None,
     cell_ids: Sequence[str] | None = None,
     *,
     context: Context | None = None,
@@ -1050,7 +1024,7 @@ async def _scratch_validate_impl(
     pad = storage.read_scratchpad(scratch_id)
 
     try:
-        target_cells = _filter_cells(pad, indices=indices, cell_ids=cell_ids)
+        target_cells = _filter_cells(pad, cell_ids=cell_ids)
     except ScratchNotebookError as exc:
         return failure(exc)
 
@@ -1117,10 +1091,10 @@ scratch_read = SERVER.tool(
         "Read a scratch notebook by id.\n\n"
         "Filters:\n"
         "- cell_ids (preferred): restrict to explicit cell UUIDs (applied before the tag filter so you can combine both).\n"
-        "- indices: legacy positional filter retained for backwards compatibility.\n"
         "- tags: return only cells whose tag set intersects the provided values.\n"
         "- namespaces: assert the pad belongs to one of the listed namespaces.\n"
-        "- include_metadata (default true): set to false when only cell payloads are needed; canonical fields remain in the response."
+        "- include_metadata (default true): set to false when only cell payloads are needed; canonical fields remain in the response.\n"
+        "Responses always include indices for ordering context, but `cell_id` is the sole identifier for subsequent edits."
     ),
 )(_scratch_read_impl)
 
@@ -1130,7 +1104,6 @@ scratch_list_cells = SERVER.tool(
         "List cells for a scratchpad without streaming full content.\n\n"
         "Filters:\n"
         "- cell_ids (preferred): provide explicit cell UUIDs when you already know them.\n"
-        "- indices: legacy positional filter retained for backwards compatibility.\n"
         "- tags: include only cells whose metadata tags intersect the provided values.\n"
         "Each entry returns cell_id, index, language, tags, and any stored metadata so you can decide whether to fetch the full cell via scratch_read."
     ),
@@ -1173,7 +1146,7 @@ scratch_append_cell = SERVER.tool(
 scratch_replace_cell = SERVER.tool(
     name="scratch_replace_cell",
     description=(
-        "Replace an existing cell. Provide either `cell_id` (preferred) or `index`; if both are supplied the id wins and the index is sanity-checked.\n"
+        "Replace an existing cell by `cell_id`. Use `new_index` to reorder the cell explicitly while keeping indices as ordering metadata only.\n"
         "When `validate` is true, diagnostics are advisory and returned alongside the updated pad just like append operations.\n"
         "If you omit `metadata`, the server reuses the previous cell metadata (including tags) so replacements keep their context."
     ),
@@ -1184,8 +1157,7 @@ scratch_validate = SERVER.tool(
     description=(
         "Validate one or more cells within a scratch notebook.\n\n"
         "Filters:\n"
-        "- cell_ids (preferred): explicit list of cell UUIDs to re-check.\n"
-        "- indices: legacy positional filter retained for backwards compatibility; when used with cell_ids the intersection is validated.\n\n"
+        "- cell_ids: explicit list of cell UUIDs to re-check.\n\n"
         "Results:\n"
         "- Each entry contains cell_id, index, language, errors, warnings, and structured `details`.\n"
         "- Diagnostics are advisory only; use them to inform follow-up edits rather than treating them as blockers.\n"
@@ -1580,11 +1552,6 @@ scratch_read.parameters = {
             "minLength": 1,
             "description": "Identifier of the target scratch notebook.",
         },
-        "indices": {
-            "type": "array",
-            "items": {"type": "integer", "minimum": 0},
-            "description": "Optional subset of cell indices to return.",
-        },
         "cell_ids": {
             "type": "array",
             "items": {"type": "string", "minLength": 1},
@@ -1699,11 +1666,6 @@ scratch_list_cells.parameters = {
             "type": "string",
             "minLength": 1,
             "description": "Identifier of the scratch notebook whose cells should be listed.",
-        },
-        "indices": {
-            "type": "array",
-            "items": {"type": "integer", "minimum": 0},
-            "description": "Optional subset of cell indices to include.",
         },
         "cell_ids": {
             "type": "array",

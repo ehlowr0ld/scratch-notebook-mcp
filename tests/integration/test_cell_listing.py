@@ -80,8 +80,8 @@ async def test_cell_listing_and_filtered_read_behaviour(app) -> None:
 
     intersection = await _scratch_list_cells_impl(
         scratch_id,
-        indices=[0, 1],
         cell_ids=[cell_ids[1], cell_ids[2]],
+        tags=["beta"],
     )
     assert intersection["ok"] is True
     intersection_cells = intersection["cells"]
@@ -90,7 +90,7 @@ async def test_cell_listing_and_filtered_read_behaviour(app) -> None:
 
     read_without_metadata = await _scratch_read_impl(
         scratch_id,
-        indices=[1],
+        cell_ids=[cell_ids[1]],
         include_metadata=False,
     )
     assert read_without_metadata["ok"] is True

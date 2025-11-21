@@ -106,10 +106,33 @@ def test_append_and_replace_roundtrip(tmp_path) -> None:
         content=json.dumps({"value": 2}),
         metadata={"tags": ["gamma"]},
     )
-    replaced = storage.replace_cell(pad.scratch_id, 0, replacement)
+    replaced = storage.replace_cell(pad.scratch_id, appended.cells[0].cell_id, replacement)
 
     assert replaced.cells[0].content == json.dumps({"value": 2})
     assert replaced.cells[0].metadata["tags"] == ["gamma"]
+
+
+def test_replace_cell_with_new_index_reorders(tmp_path) -> None:
+    cfg = _build_config(tmp_path)
+    storage = Storage(cfg)
+
+    pad = _make_pad(cell_count=3)
+    storage.create_scratchpad(pad)
+    target_id = pad.cells[0].cell_id
+
+    replacement = models.ScratchCell(
+        cell_id=target_id,
+        index=0,
+        language="json",
+        content=json.dumps({"moved": True}),
+        metadata={"tags": ["moved"]},
+    )
+
+    updated = storage.replace_cell(pad.scratch_id, target_id, replacement, new_index=2)
+
+    assert [cell.index for cell in updated.cells] == [0, 1, 2]
+    assert updated.cells[2].cell_id == target_id
+    assert updated.cells[2].metadata["tags"] == ["moved"]
 
 
 def test_list_scratchpads_returns_minimal_fields_sorted(tmp_path) -> None:
@@ -247,9 +270,9 @@ def test_replace_missing_cell_raises(tmp_path) -> None:
     storage.create_scratchpad(pad)
 
     with pytest.raises(ScratchNotebookError) as exc:
-        storage.replace_cell(pad.scratch_id, 0, _make_cell(0))
+        storage.replace_cell(pad.scratch_id, "missing-cell", _make_cell(0))
 
-    assert exc.value.code == INVALID_INDEX
+    assert exc.value.code == NOT_FOUND
 
 
 def test_get_missing_scratchpad_raises(tmp_path) -> None:

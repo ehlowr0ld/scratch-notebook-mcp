@@ -600,17 +600,42 @@ class Storage:
         return pad
 
     @synchronized
-    def replace_cell(self, scratch_id: str, index: int, cell: models.ScratchCell) -> models.Scratchpad:
+    def replace_cell(
+        self,
+        scratch_id: str,
+        cell_id: str,
+        cell: models.ScratchCell,
+        *,
+        new_index: int | None = None,
+    ) -> models.Scratchpad:
         row = self._fetch_row(scratch_id)
         if row is None:
             raise StorageError(NOT_FOUND, f"Scratchpad {scratch_id} not found")
         pad = self._pad_from_row(row)
-        if index < 0 or index >= len(pad.cells):
-            raise StorageError(INVALID_INDEX, f"Cell index {index} out of range")
+        cell_lookup = {existing.cell_id: idx for idx, existing in enumerate(pad.cells)}
+        current_index = cell_lookup.get(str(cell_id))
+        if current_index is None:
+            raise StorageError(NOT_FOUND, f"Cell id {cell_id} not found")
+
+        target_index = current_index if new_index is None else new_index
+        if target_index < 0 or target_index >= len(pad.cells):
+            raise StorageError(INVALID_INDEX, f"Cell index {target_index} out of range")
 
         self._enforce_cell_size(cell)
-        cell.index = index
-        pad.cells[index] = cell
+        existing_cell = pad.cells[current_index]
+        cell.cell_id = existing_cell.cell_id
+        pad.cells[current_index] = cell
+
+        if target_index != current_index:
+            moving = pad.cells.pop(current_index)
+            insert_position = target_index
+            if insert_position > len(pad.cells):
+                insert_position = len(pad.cells)
+            pad.cells.insert(insert_position, moving)
+
+        for idx, candidate in enumerate(pad.cells):
+            candidate.index = idx
+
         self._write_pad(pad, row)
         return pad
 

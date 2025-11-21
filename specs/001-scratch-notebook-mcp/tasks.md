@@ -355,11 +355,11 @@ Path conventions for this project (per `plan.md`):
   - Describe exactly when automatic validation runs, what happens on validation diagnostics, and how to interpret `results` arrays.
   - Document that manual `scratch_validate` calls treat validation as advisory and can be targeted by cell ids.
   - Ensure prompts remain self-contained so agents understand parameters, behaviours, and response shapes without reading this repository.
-- [ ] T103 [P] Remove index-based addressing from edit operations and keep indices only as ordering metadata:
+- [X] T103 [P] Remove index-based addressing from edit operations and keep indices only as ordering metadata:
   - Update `spec.md`, `data-model.md`, `contracts/mcp-tools.md`, `scratch-notepad-tool.md`, `research.md`, `quickstart.md`, `README.md`, `DEVELOPMENT.md`, and `AGENTS.md` so editing tools (`scratch_replace_cell`, `scratch_validate`, `scratch_read`, `scratch_list_cells`) describe `cell_id` as the sole identifier for mutations; indices are documented purely as order indicators.
   - Extend `scratch_replace_cell` contract with an optional `new_index` parameter (or equivalent) that lets clients reorder cells without relying on positional addressing.
   - Add a new server-level task covering prompt updates so FastMCP instructions fully describe the id-only editing and reorder semantics.
-- [ ] T104 [P] Implement the id-only editing model:
+- [X] T104 [P] Implement the id-only editing model:
   - Update server/storage code so `_scratch_replace_cell_impl`, `_scratch_validate_impl`, `_scratch_read_impl`, `_scratch_list_cells_impl`, and related helpers accept only `cell_id` for targeting cells (indices removed except for the reorder parameter).
   - Teach storage to handle reorder requests by shifting neighbouring cells when `new_index` (or the chosen reorder parameter) is provided, ensuring indexes remain contiguous.
   - Adjust prompt text, tests (unit, integration, contract), and schemas to align with the new parameter set; remove index-based addressing tests and add reorder coverage.

@@ -52,20 +52,6 @@ async def _create_populated_pad() -> tuple[str, list[str]]:
 
 
 @pytest.mark.asyncio
-async def test_read_filters_by_indices(app) -> None:
-    scratch_id, cell_ids = await _create_populated_pad()
-
-    resp = await _scratch_read_impl(scratch_id, indices=[1, 2])
-
-    assert resp["ok"] is True
-    cells = resp["scratchpad"]["cells"]
-    assert [cell["index"] for cell in cells] == [1, 2]
-    assert [cell["cell_id"] for cell in cells] == cell_ids[1:3]
-    assert [cell["tags"] for cell in cells] == [["tag-1"], ["tag-2"]]
-    assert resp["scratchpad"]["tags"] == ["tag-0", "tag-1", "tag-2"]
-
-
-@pytest.mark.asyncio
 async def test_read_filters_by_cell_ids(app) -> None:
     scratch_id, cell_ids = await _create_populated_pad()
 
@@ -81,17 +67,29 @@ async def test_read_filters_by_cell_ids(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_filters_by_indices_and_cell_ids_intersection(app) -> None:
+async def test_read_filters_by_cell_ids_custom_order(app) -> None:
     scratch_id, cell_ids = await _create_populated_pad()
 
-    resp = await _scratch_read_impl(scratch_id, indices=[0, 1], cell_ids=[cell_ids[1]])
+    resp = await _scratch_read_impl(scratch_id, cell_ids=[cell_ids[2], cell_ids[0]])
+
+    assert resp["ok"] is True
+    cells = resp["scratchpad"]["cells"]
+    assert [cell["cell_id"] for cell in cells] == [cell_ids[2], cell_ids[0]]
+    assert [cell["index"] for cell in cells] == [2, 0]
+    assert resp["scratchpad"]["tags"] == ["tag-0", "tag-1", "tag-2"]
+
+
+@pytest.mark.asyncio
+async def test_read_filters_by_cell_ids_and_tags_intersection(app) -> None:
+    scratch_id, cell_ids = await _create_populated_pad()
+
+    resp = await _scratch_read_impl(scratch_id, cell_ids=[cell_ids[0], cell_ids[1]], tags=["tag-1"])
 
     assert resp["ok"] is True
     cells = resp["scratchpad"]["cells"]
     assert len(cells) == 1
     assert cells[0]["cell_id"] == cell_ids[1]
     assert cells[0]["tags"] == ["tag-1"]
-    assert resp["scratchpad"]["tags"] == ["tag-0", "tag-1", "tag-2"]
 
 
 @pytest.mark.asyncio
@@ -108,13 +106,13 @@ async def test_read_include_metadata_false_omits_metadata(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_with_invalid_index_returns_error(app) -> None:
+async def test_read_with_invalid_cell_id_returns_error(app) -> None:
     scratch_id, _ = await _create_populated_pad()
 
-    resp = await _scratch_read_impl(scratch_id, indices=[42])
+    resp = await _scratch_read_impl(scratch_id, cell_ids=["missing-id"])
 
     assert resp["ok"] is False
-    assert resp["error"]["code"] == "INVALID_INDEX"
+    assert resp["error"]["code"] == "NOT_FOUND"
 
 
 @pytest.mark.asyncio

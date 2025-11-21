@@ -94,7 +94,7 @@ The package `scratch_notebook` will be a normal Python distribution, likely mana
   - Implementations may store validation results or return them inline; the canonical detailed results are from `scratch_validate`.
 
 - **Manual (`scratch_validate`)**:
-  - Accepts a `scratch_id` and optional `indices`.
+  - Accepts a `scratch_id` and optional `cell_ids`.
   - Validates all or specified cells, returning a `results` array of `ValidationResult` objects, as defined in `scratch-notepad-tool.md`.
 
 ## 4. Storage And Persistence

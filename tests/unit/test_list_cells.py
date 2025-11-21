@@ -64,17 +64,6 @@ async def test_list_cells_returns_all_entries(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_cells_filters_by_indices(app) -> None:
-    scratch_id, cell_ids = await _make_pad_with_cells()
-
-    resp = await _scratch_list_cells_impl(scratch_id, indices=[1, 2])
-
-    assert resp["ok"] is True
-    cells = resp["cells"]
-    assert [cell["cell_id"] for cell in cells] == cell_ids[1:3]
-
-
-@pytest.mark.asyncio
 async def test_list_cells_filters_by_cell_ids(app) -> None:
     scratch_id, cell_ids = await _make_pad_with_cells()
 
@@ -101,29 +90,19 @@ async def test_list_cells_filters_by_tags(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_cells_intersection_of_indices_and_ids(app) -> None:
+async def test_list_cells_intersection_of_cell_ids_and_tags(app) -> None:
     scratch_id, cell_ids = await _make_pad_with_cells()
 
     resp = await _scratch_list_cells_impl(
         scratch_id,
-        indices=[0, 1],
         cell_ids=[cell_ids[1], cell_ids[2]],
+        tags=["tag-1"],
     )
 
     assert resp["ok"] is True
     cells = resp["cells"]
     assert len(cells) == 1
     assert cells[0]["cell_id"] == cell_ids[1]
-
-
-@pytest.mark.asyncio
-async def test_list_cells_invalid_index_returns_error(app) -> None:
-    scratch_id, _ = await _make_pad_with_cells()
-
-    resp = await _scratch_list_cells_impl(scratch_id, indices=[999])
-
-    assert resp["ok"] is False
-    assert resp["error"]["code"] == "INVALID_INDEX"
 
 
 @pytest.mark.asyncio

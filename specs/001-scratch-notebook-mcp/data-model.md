@@ -222,6 +222,8 @@ Each MCP tool operates on the core entities above and has corresponding request/
 - `tags: string[]` (optional; when provided, only cells whose `tags` contain any requested value are returned)
 - `include_metadata: boolean` (optional, default `true`)
 
+> **Note**: Responses retain `index` for ordering context, but clients MUST use `cell_id` for all targeted operations.
+
 **Response (success)**
 
 - `ok: true`
@@ -303,6 +305,8 @@ Each MCP tool operates on the core entities above and has corresponding request/
 
 - `scratch_id: string`
 - `cell_ids: string[]` (optional; if provided, validate specific cells by ID; when omitted, all cells are validated)
+
+> **Note**: Index-based selectors are not supported; pass explicit `cell_ids` or omit the parameter to validate the entire notebook.
 
 **Response (success)**
 

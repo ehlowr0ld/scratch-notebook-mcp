@@ -65,6 +65,7 @@ Large refactors should run the targeted suite first and then the full suite to e
 - Use FastMCP logging (`logging.py`) to ensure transport-aware routing (stderr vs telemetry).
 - Reuse `_shutdown_protected` and `_storage_error_guard` for new FastMCP tools so shutdown semantics and StorageError conversion remain consistent.
 - Honour NFR-017A: validation is advisory. Automatic and manual validation MUST never roll back or reject writes solely because diagnostics were reported; unresolved schema references are surfaced as warnings, not top-level errors.
+- Treat indices as presentation metadata only. Target cells via `cell_id` for reads, listings, validations, and replacements, and rely on the optional `new_index` parameter when reordering through `scratch_replace_cell`.
 - When adding features that affect tool semantics, update:
   - Specification documents (spec, plan, data-model, research, quickstart) to reflect behaviour.
   - Tool prompts in `server.py` so agents receive complete, self-contained guidance.
@@ -110,4 +111,4 @@ Refer to the surrounding parameter and output schema definitions in `server.py` 
 2. Run the full `pytest` suite.
 3. Ensure README configuration snippets reference the latest CLI/environment flags.
 4. Verify FastMCP tool descriptions accurately describe parameters and expected behaviour.
-5. Update `CHANGELOG.md` (if introduced) and dependency pins as needed.
+5. Whenever the user asks for a release/tag, add the new entry to `CHANGELOG.md`, refresh the README release note to the provided version, and update dependency pins if the release requires it.

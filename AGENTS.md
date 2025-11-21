@@ -80,6 +80,7 @@ Supplementary references:
 5. Update tool prompts when behaviour changes; keep namespace guidance consistent for shared default tenant usage.
 6. When modifying behaviour, update spec documents as required and append new tasks via the constitution process.
 7. Maintain real-time checklist synchronization: mark `tasks.md` items complete immediately after verifying requirements.
+8. When the user requests a release or provides a version tag, add/refresh the matching entry in `CHANGELOG.md`, update the README release note to that version, and record the action in `specs/001-scratch-notebook-mcp/implementation.md` before handing the work back.
 
 ## 8. Testing Strategy
 - Default command: `timeout 60 pytest`.
@@ -132,6 +133,8 @@ Adhering to this guide ensures continuity across autonomous developer sessions a
 | `scratch_search` | Semantic search across pads, filtering by namespaces/tags when you need scoped results. |
 | `scratch_list_schemas` / `scratch_get_schema` / `scratch_upsert_schema` | Manage schema registry entries so append/replace/validate can reference `scratchpad://schemas/<name>` ids. |
 | `scratch_namespace_list` / `scratch_namespace_create` / `scratch_namespace_rename` / `scratch_namespace_delete` | Keep namespace prefixes organised when multiple projects share the tenant. Avoid creating new namespaces unless necessary, and prefer renaming over deleting when existing pads should migrate. |
+
+Indices in responses are for presentation only. Always target cells via `cell_id`, and pass the optional `new_index` argument to `scratch_replace_cell` when you need to reorder a cell while editing it.
 
 Validation reminders:
 - Automatic validation triggers only when you pass `validate=true` on append/replace. Otherwise, call `scratch_validate` explicitly. Validation is advisory: diagnostics never cause a cell to be dropped or a write to be rejected.
